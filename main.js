@@ -23,12 +23,12 @@ const unescape_roman_numbers = word => {
         'II': '2',
         'III': '3',
         'IV': '4',
-        'V': '5',
+        // 'V': '5',
         'VI': '6',
         'VII': '7',
         'VIII': '8',
         'IX': '9',
-        'X': '10',
+        // 'X': '10',
         'XI': '11',
     }[word] || word
 }
@@ -49,28 +49,29 @@ const match_year = (name) => {
     return false;
 }
 
-const extract_movie_name_from_path = (path) => {
+const extract_movie_query_from_path = (path) => {
     // Uses filename or dirname to find a good seach term.
     const filename = path.split('/').splice(-1)[0] || ''
     const parentname = path.split('/').splice(-2)[0] || ''
     const parentparentname = path.split('/').splice(-3)[0] || ''
-    // Assume parent name is a good starting point.
-    let result = [extract_movie_name_from_name(parentname) || '']
-    // If we find "pack" or "complete" in the parent name,
-    // assume this is a move pack and prefer name from file name.
-    if (is_movie_pack(parentname)) {
-        result = [extract_movie_name_from_name(filename) || '']
-        // If parent name doesnt have a year in it, but filename has a year,
-        // prefer using filename over parent name
-    } else if (!result.some(s => match_year(s))) {
-        result.push(extract_movie_name_from_name(filename))
+    let results = []
+    // If parent name looks like a movie pack, dont use it.
+    if (!is_movie_pack(parentname)) {
+        results = [
+            extract_movie_query_from_text(parentname),
+            extract_movie_query_from_text(filename)
+        ]
+    } else {
+        results = [extract_movie_query_from_text(filename)]
     }
+    results = results.filter(n => n) // Remove empty strings
+
     // If we still have no year at this point, try upper parent and see
     // if that title contains a year. If not, use old result.
-    if (!result.some(s => match_year(s))) {
-        const tmp_result = extract_movie_name_from_name(parentparentname)
+    if (!results.some(s => match_year(s)) && !is_movie_pack(parentparentname)) {
+        const tmp_result = extract_movie_query_from_text(parentparentname)
         if (match_year(tmp_result)) {
-            result.push(tmp_result)
+            results.push(tmp_result)
         }
     }
     // Sort so that we prioritize titles with years,
@@ -78,13 +79,13 @@ const extract_movie_name_from_path = (path) => {
     return {
         'parent': parentname,
         'file': filename,
-        'query': result.sort((s1, s2) => {
+        'query': results.sort((s1, s2) => {
             const year_prio = !!match_year(s2) - !!match_year(s1)
             return year_prio || s2.length - s1.length
         })
     }
 }
-const extract_movie_name_from_name = (name) => {
+const extract_movie_query_from_text = (name) => {
     const whitespace = /[ \.\-\_,:?]/
     const regex_hard_end_words = [
         /^720p$/,
@@ -153,7 +154,9 @@ const extract_movie_name_from_name = (name) => {
     const result = words
         .map(w => unescape_leetspeak(w))
         .map(w => unescape_roman_numbers(w))
-        .slice(0, finalEndIndex).join('_').toLowerCase()
+        .slice(0, finalEndIndex)
+        .join('_').toLowerCase()
+        .replaceAll(/__/g, '_') // Sometimes, dubble underscores can occur
     return result
 }
 
@@ -191,37 +194,49 @@ const strip_year = query => {
     return query.replace(/_[0-9][0-9][0-9][0-9]$/, '')
 }
 
-const query_imdb = async (query) => {
+const query_imdb = async (query, year) => {
     const url = `https://v2.sg.media-imdb.com/suggestion/${query[0]}/${query}.json`
     const response = await request(url)
     if (response.statusCode == 200) {
         return (JSON.parse(response.body).d || [])
+            .map(r => {
+                r.source_year = year
+                r.source_query = query
+                return r
+            })
     }
     return []
 }
 
 // Scores similar titles. Higher score is "more similar"
 const title_diff_score = (t1, t2) => {
+    t1words = t1.split('_').filter(w => w)
+    t2words = t2.split('_').filter(w => w)
     const count_matching_words = (
-        t1.split('_').map(w => w && !!t2.match(w)).reduce((c1, c2) => c1 + c2) +
-        t2.split('_').map(w => w && !!t1.match(w)).reduce((c1, c2) => c1 + c2)
+        t1words.map(w => w && !!t2.match(w)).reduce((c1, c2) => c1 + c2) +
+        t2words.map(w => w && !!t1.match(w)).reduce((c1, c2) => c1 + c2)
     )
-    const is_substring = (!!t1.match(t2) || !!t2.match(t1))
+    const count_missing_words = (
+        t1words.map(w => w && !t2.match(w)).reduce((c1, c2) => c1 + c2) +
+        t2words.map(w => w && !t1.match(w)).reduce((c1, c2) => c1 + c2)
+    )
+    const is_substring = 0 + !!(t1.match(t2) || t2.match(t1))
+    const no_matching_words = (count_matching_words <= 0)
 
-    return (count_matching_words < 1 ? -10 : count_matching_words)
-        - Math.abs(t1.split('_').length - t2.split('_').length)
-        + is_substring * 10
+    return is_substring * 10
+        + count_matching_words
+        - count_missing_words
+        - no_matching_words * 10
+        - Math.abs(t1words.length - t2words.length) * 2
 }
 
-const score_imdb_entity = (imdb_entity, query, year) => {
-    imdb_entity.query = extract_movie_name_from_name(imdb_entity.l) + ((year && imdb_entity.y) ? '_' + imdb_entity.y : '');
-    imdb_entity.source_query = query
-    imdb_entity.source_year = year
+const score_imdb_entity = (imdb_entity) => {
+    imdb_entity.query = extract_movie_query_from_text(imdb_entity.l) + ((imdb_entity.source_year && imdb_entity.y) ? '_' + imdb_entity.y : '');
     imdb_entity.score =
         // Add score for title similarity
-        title_diff_score(query, imdb_entity.query) +
+        title_diff_score(imdb_entity.source_query, imdb_entity.query) +
         // Add points for matching year
-        (year ? !!year.match(imdb_entity.y) * 5 : 0) +
+        (imdb_entity.source_year ? !!imdb_entity.source_year.match(imdb_entity.y) * 10 : 0) +
         // Add score if it is a movie
         (imdb_entity.q === 'feature') * 20 +
         // Add score if it is a video (a few movies are videos in imdb)
@@ -230,54 +245,49 @@ const score_imdb_entity = (imdb_entity, query, year) => {
 }
 
 const lookup_entry = async entry => {
-    const query = entry.query[0]
-    const year = match_year(query)
-    let results = await query_imdb(query)
-
-    // Query without the year if no movies where found
-    if (results.filter(r => r.q === 'feature').length == 0) {
+    let results = []
+    for (const query of entry.query) {
+        const year = match_year(query)
+        results = results.concat(await query_imdb(query, year))
         const query_stripped = strip_year(query)
-        results = results.concat(await query_imdb(query_stripped))
-    }
+        results = results.concat(await query_imdb(query_stripped, year))
 
-    // Query with maximum 20 characters (imdb web ui maximum)
-    // if no movies were found
-    if (results.filter(r => r.q === 'feature').length == 0) {
-        const query_stripped = query.slice(0, 20)
-        results = results.concat(await query_imdb(query_stripped))
+        // Query with maximum 20 characters (imdb web ui maximum)
+        // if no movies were found
+        if (results.filter(r => r.q === 'feature').length == 0) {
+            const query_stripped = query.slice(0, 20)
+            results = results.concat(await query_imdb(query_stripped, year))
+        }
     }
-
     // If we have results at this point, score and pick the best one.
     if (results.length > 0) {
         const result = results
-            .map(r => score_imdb_entity(r, query, year))
+            .map(r => score_imdb_entity(r))
             .sort((r1, r2) => r2.score - r1.score)[0]
         result.source = entry.file;
         return result
-    }
-    // If no nothing is still found, try next query instead
-    else if (entry.query.length > 1) {
-        entry.query = entry.query.slice(1)
-        return await lookup_entry(entry)
     }
 
     // If we exhaust all queries without finding anything,
     // return this stump (useful for debuging)
     return {
-        l: query,           // title (use for debuging)
+        l: entry.query.join(' | '),
         source: entry.file,
         score: -100,
     }
 }
 
 const main = async () => {
-    const movies_filenames_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
-    const movies_filenames_filtered = remove_samples(movies_filenames_raw)
-    
-    // const movie_entries = ['/tank/storage/movies/Fast and Furious Collection (2001-2019) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE]/Fast and Furious 6 (2013) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE].mkv'].map(m => extract_movie_name_from_path(m))
-    const movie_entries = movies_filenames_filtered.slice(0, 600).map(m => extract_movie_name_from_path(m))
+    const rootDir = '/tank/storage/movies/'
+    const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
+    const movies_paths_filtered = remove_samples(movies_paths_raw)
+        .map(p => p.replace(rootDir, '')) // Remove prepending root dir 
+
+    // const movie_entries = ['/tank/storage/movies/Fast and Furious Collection (2001-2019) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE]/Fast and Furious 6 (2013) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE].mkv'].map(m => extract_movie_query_from_path(m))
+    const movie_entries = movies_paths_filtered.slice(0, 1000).map(m => extract_movie_query_from_path(m))
     const imdb_entries = (await Promise.all(movie_entries.map(m => lookup_entry(m))))
-    console.log(imdb_entries.map(e => `${e.id}: ${e.l} (${e.y || e.source_year}) \n     File: ${e.source.slice(0,100)}\n    Score: ${e.score}`).join("\n"))
+        .sort((e1, e2) => e2.score - e1.score)
+    console.log(imdb_entries.map((e => `${e.id}: ${e.l} (${e.y || e.source_year}) \n     File: ${e.source.slice(0, 100)}\n    Score: ${e.score}`)).join("\n"))
     await write_http_cache();
 }
 

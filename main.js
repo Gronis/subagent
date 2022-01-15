@@ -1,5 +1,6 @@
-const fs = require('fs').promises
+const fs = require('fs').promises;
 const http_request = require('./http_request');
+const zip = require('./zip');
 
 const unescape_leetspeak = word => {
     const is_leet = word.match(/[0-9]/) && word.match(/[a-zA-Z]/)
@@ -277,6 +278,62 @@ const lookup_entry = async entry => {
     }
 }
 
+const fetch_sub_urls = async (imdb_id, language) => {
+    const id = imdb_id.replace('tt','imdbid-');
+    const url = `https://www.opensubtitles.org/en/search/sublanguageid-${language}/${id}`
+    const request = await http_request(url)
+    // Just use regex to find out which links point to a subtitle file.
+    const subUrl = /href="(\/[a-z][a-z]\/subtitleserve\/sub\/[0-9]*)"/g
+    return [...request.body.matchAll(subUrl)].map(m => `https://www.opensubtitles.org${m[1]}`)
+}
+
+const detect_encoding = buffer => {
+    // Checks "magic bytes" in the beginning to detect utf8 encoding.
+    if(buffer.length > 2 && buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF){
+        return 'utf8'
+    }
+    // If no magic bytes exists, check if text follows utf8 standard.
+    // e.g, first non-ascii character is in [0xC0,0xF8]
+    // following blocks
+    for(let i = 0; i < buffer.length; i++){
+        const char = buffer[i]
+        if (0xC0 <= char && char < 0xF8){
+            const j = i;
+            let first_char = true;
+            i++;
+            for(; i < buffer.length && (i-j) < 64; i++){
+                const char = buffer[i]
+                if (0x80 <= char && char < 0xC0){
+                    first_char = false;
+                } else if(char < 0x80 && !first_char) {
+                    break;
+                } else if(first_char){
+                    return 'binary';
+                }
+            }
+        } else if(0x80 <= char && char < 0xC0) {
+            return 'binary'
+        }
+    }
+    return 'utf8'
+}
+
+const unzip_archive = buffer => {
+    const entries = Object.entries(zip.Reader(buffer).toObject())
+        .map(([filename, buffer]) => [filename, buffer.toString(detect_encoding(buffer))])
+    return Object.fromEntries(entries)
+}
+
+const fetch_sub_archive = async url => {
+    const request = await http_request(url)
+    if(request.statusCode == 200){
+        const buffer = Buffer.from(request.body, "binary")
+        return unzip_archive(buffer)
+    }
+    return ''
+}
+
+
 const main = async () => {
     const rootDir = '/tank/storage/movies/'
     const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
@@ -284,10 +341,19 @@ const main = async () => {
         .map(p => p.replace(rootDir, '')) // Remove prepending root dir 
 
     // const movie_entries = ['/tank/storage/movies/Fast and Furious Collection (2001-2019) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE]/Fast and Furious 6 (2013) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE].mkv'].map(m => extract_movie_query_from_path(m))
-    const movie_entries = movies_paths_filtered.slice(0, 1000).map(m => extract_movie_query_from_path(m))
+    const movie_entries = movies_paths_filtered.slice(0, 4).map(m => extract_movie_query_from_path(m))
     const imdb_entries = (await Promise.all(movie_entries.map(m => lookup_entry(m))))
         .sort((e1, e2) => e2.score - e1.score)
-    console.log(imdb_entries.map((e => `${e.id}: ${e.l} (${e.y || e.source_year}) \n     File: ${e.source.slice(0, 100)}\n    Score: ${e.score}`)).join("\n"))
+    // console.log(imdb_entries.map((e => `${e.id}: ${e.l} (${e.y || e.source_year}) \n     File: ${e.source.slice(0, 100)}\n    Score: ${e.score}`)).join("\n"))
+    
+    //Fetch subs
+    sub_urls = await fetch_sub_urls(imdb_entries[1].id, 'swe')
+    sub_archive = await fetch_sub_archive(sub_urls[0])
+    const sub_file = Object.keys(sub_archive).find(filename => filename.endsWith('.srt'))
+    console.log(`Got "${sub_file}", size: ${sub_archive[sub_file].length}`)
+
+    await fs.writeFile(sub_file, sub_archive[sub_file], 'utf8')
+    // Save request cache
     await write_http_cache();
 }
 

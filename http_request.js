@@ -21,16 +21,27 @@ const http_request = (url, body, options) => {
   
   return new Promise((resolve, reject) => {
     const req = module.request(options, (res) => {
-      let response = {};
+      let response = {}
       let body = []
-      res.setEncoding('utf8');
+      if((res.headers['content-type'] || '').startsWith('application')){
+        res.setEncoding('binary')
+      } else {
+        res.setEncoding('utf8');
+      }
       res.on('data', (chunk) => {
         body.push(chunk);
       });
       res.on('end', () => {
         response.body = body.join('');
         response.statusCode = res.statusCode;
-        resolve(response)
+        response.headers = res.headers;
+        if(res.statusCode == 302){
+            http_request(response.headers.location)
+                .then(r => resolve(r))
+                .catch(reject)
+        } else {
+            resolve(response)
+        }
       });
     });
     

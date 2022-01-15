@@ -1,0 +1,4 @@
+*.srt
+.DS_Store
+http_cache.json
+movies.txt

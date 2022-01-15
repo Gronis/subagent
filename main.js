@@ -19,7 +19,7 @@ const unescape_leetspeak = word => {
 
 const unescape_roman_numbers = word => {
     return {
-        'I': '1',
+        // 'I': '1',
         'II': '2',
         'III': '3',
         'IV': '4',
@@ -114,6 +114,7 @@ const extract_movie_name_from_name = (name) => {
         /^nordic$/,
         /^extras$/,
         /^extra$/,
+        /^remastered$/,
     ]
     // Only end word if they happen after a word with 4 numbers (a year)
     const regex_soft_end_words = [
@@ -159,47 +160,113 @@ const remove_samples = (movies) => {
     return movies.filter(p => !p.toLowerCase().match('sample'))
 }
 
-const title_diff = (t1, t2) => {
-    const count_matching_words = t1.split('_').map(w => w && !!t2.match(w)).reduce((c1, c2) => c1 + c2)
-        + t2.split('_').map(w => w && !!t1.match(w)).reduce((c1, c2) => c1 + c2)
-    const is_substring = !!(t1.match(t2) || t2.match(t1))
+// Scores similar titles. Higher score is "more similar"
+const title_diff_score = (t1, t2) => {
+    const count_matching_words = 
+        ( t1.split('_').map(w => w && !!t2.match(w)).reduce((c1, c2) => c1 + c2)
+        + t2.split('_').map(w => w && !!t1.match(w)).reduce((c1, c2) => c1 + c2))
+    const is_substring = (!!t1.match(t2) || !!t2.match(t1))
     
     return (count_matching_words < 1? -10 : count_matching_words) 
         - Math.abs(t1.split('_').length - t2.split('_').length)
         + is_substring * 10
 }
 
-const query_imdb = async entry => {
+// This is just a http request cache to not make imdb ban me while developing
+let REQUEST_CACHE = {};
+(async () => {
+    try{
+        const http_cache = await fs.readFile('http_cache.json', 'utf8');
+        if(http_cache){
+            REQUEST_CACHE = JSON.parse(http_cache)
+        }
+    } catch {
+        // No cache file exists. Just skip for now
+    }
+})();
+
+const request = async url => {
+    if(REQUEST_CACHE[url]){
+        return REQUEST_CACHE[url]
+    }
+    const response = await http_request(url)
+    REQUEST_CACHE[url] = response
+    return response
+}
+
+const write_http_cache = async () => {
+    await fs.writeFile('http_cache.json', JSON.stringify(REQUEST_CACHE));
+}
+
+const strip_year = query => {
+    return query.replace(/_[0-9][0-9][0-9][0-9]$/, '') 
+}
+
+const query_imdb = async (query) => {
+    const url = `https://v2.sg.media-imdb.com/suggestion/${query[0]}/${query}.json`
+    const response = await request(url)
+    if (response.statusCode == 200) {
+        return (JSON.parse(response.body).d || [])
+    }
+    return []
+}
+
+const score_imdb_entity = (imdb_entity, query, year) => {
+    imdb_entity.query = extract_movie_name_from_name(imdb_entity.l) + ((year && imdb_entity.y)? '_' + imdb_entity.y : '');
+    imdb_entity.source_query = query
+    imdb_entity.source_year = year
+    imdb_entity.score = title_diff_score(query, imdb_entity.query) + 
+        (year? !!year.match(imdb_entity.y) * 5 : 0) +
+        (imdb_entity.q === 'feature') * 20 // indicates that it is a movie
+    return imdb_entity
+}
+
+const lookup_entry = async entry => {
     const query = entry.query[0]
     const year = match_year(query)
-    const query_stripped = query.match(/_/g).length > 2? query.replace(/_[0-9][0-9][0-9][0-9]$/, '') : query;
-    const response = await http_request(`https://v2.sg.media-imdb.com/suggestion/${query[0]}/${query_stripped}.json`)
-    if (response.statusCode == 200) {
-        const results = (JSON.parse(response.body).d || [])
-            .map(r => {
-                r.query = extract_movie_name_from_name(r.l) + ((year && r.y)? '_' + r.y : '');
-                r.search = query
-                r.source = entry.file
-                r.qy = year
-                r.score = title_diff(query, r.query) + 
-                    (year? !!year.match(r.y) * 5 : 0) +
-                    (r.q === 'feature') * 20 // indicates that it is a movie
-                return r;
-            })
-        return results.sort((r1,r2) => r2.score - r1.score)[0]
+    const query_stripped = (query.match(/_/g) || []).length > 2? strip_year(query) : query;
+
+    let results = (await query_imdb(query)).map(ie => score_imdb_entity(ie, query, year))
+    
+    if(results.length == 0){
+        const query_stripped = strip_year(query)
+        results = (await query_imdb(query_stripped)).map(ie => score_imdb_entity(ie, query_stripped, year))
     }
-    return {}
+
+    if(results.length == 0 && entry.query.length > 1){
+        entry.query = entry.query.slice(1)
+        return await lookup_entry(entry)
+    }
+
+    if(results.length > 0){
+        const result = results.sort((r1,r2) => r2.score - r1.score)[0]
+        result.source = entry.file;
+        return result
+    }
+    
+    return {
+        l: entry.query[0],
+        source: entry.file,
+        score: 0,
+    }
 }
 
 const main = async () => {
     const movies_filenames_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
     const movies_filenames_filtered = remove_samples(movies_filenames_raw)
     // const movie_entries = ['/tank/storage/movies/Fast and Furious Collection (2001-2019) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE]/Fast and Furious 6 (2013) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE].mkv'].map(m => extract_movie_name_from_path(m))
-    const movie_entries = movies_filenames_filtered.slice(40,80).map(m => extract_movie_name_from_path(m))
+    const movie_entries = movies_filenames_filtered.slice(0,260).map(m => extract_movie_name_from_path(m))
     // console.log(movie_entries)
     // console.log(JSON.stringify(movies_filenames_filtered.slice(0,10).map(m => extract_movie_name_from_path(m))))
     // console.log(JSON.stringify(['/tank/storage/movies/Mission Impossible/Mission Impossible II 2000.mkv'].map(m => extract_movie_name_from_path(m))))
-    console.log(await Promise.all(movie_entries.map(m => query_imdb(m))))
+    
+    const imdb_entries = (await Promise.all(movie_entries.map(m => lookup_entry(m))))
+        // .filter(e => e)
+
+    console.log(imdb_entries)
+    console.log(imdb_entries.map(e => `${e.id}: ${e.l} (${e.y || e.source_year}) \n     File: ${e.source}`).join("\n"))
+
+    await write_http_cache();
 }
 
 main();

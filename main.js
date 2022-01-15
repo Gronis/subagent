@@ -40,10 +40,10 @@ const is_movie_pack = (path) => {
 }
 
 const match_year = (name) => {
-    name = ' '  + name.split('_').reverse().join(' ')
+    name = ' ' + name.split('_').reverse().join(' ')
     const regex_year = /[ \.\-\_,][0-9][0-9][0-9][0-9]/;
     const match = name.match(regex_year)
-    if(match){
+    if (match) {
         return match[0].trim()
     }
     return false;
@@ -106,6 +106,8 @@ const extract_movie_name_from_name = (name) => {
         /^dts$/,
         /^bluray$/,
         /^remux$/,
+        /^unrated$/,
+        /^remastered$/,
         /^theatrical$/,
         /^extended$/,
         /^korsub$/,
@@ -114,7 +116,6 @@ const extract_movie_name_from_name = (name) => {
         /^nordic$/,
         /^extras$/,
         /^extra$/,
-        /^remastered$/,
     ]
     // Only end word if they happen after a word with 4 numbers (a year)
     const regex_soft_end_words = [
@@ -160,24 +161,12 @@ const remove_samples = (movies) => {
     return movies.filter(p => !p.toLowerCase().match('sample'))
 }
 
-// Scores similar titles. Higher score is "more similar"
-const title_diff_score = (t1, t2) => {
-    const count_matching_words = 
-        ( t1.split('_').map(w => w && !!t2.match(w)).reduce((c1, c2) => c1 + c2)
-        + t2.split('_').map(w => w && !!t1.match(w)).reduce((c1, c2) => c1 + c2))
-    const is_substring = (!!t1.match(t2) || !!t2.match(t1))
-    
-    return (count_matching_words < 1? -10 : count_matching_words) 
-        - Math.abs(t1.split('_').length - t2.split('_').length)
-        + is_substring * 10
-}
-
 // This is just a http request cache to not make imdb ban me while developing
 let REQUEST_CACHE = {};
 (async () => {
-    try{
+    try {
         const http_cache = await fs.readFile('http_cache.json', 'utf8');
-        if(http_cache){
+        if (http_cache) {
             REQUEST_CACHE = JSON.parse(http_cache)
         }
     } catch {
@@ -186,7 +175,7 @@ let REQUEST_CACHE = {};
 })();
 
 const request = async url => {
-    if(REQUEST_CACHE[url]){
+    if (REQUEST_CACHE[url]) {
         return REQUEST_CACHE[url]
     }
     const response = await http_request(url)
@@ -199,7 +188,7 @@ const write_http_cache = async () => {
 }
 
 const strip_year = query => {
-    return query.replace(/_[0-9][0-9][0-9][0-9]$/, '') 
+    return query.replace(/_[0-9][0-9][0-9][0-9]$/, '')
 }
 
 const query_imdb = async (query) => {
@@ -211,61 +200,84 @@ const query_imdb = async (query) => {
     return []
 }
 
+// Scores similar titles. Higher score is "more similar"
+const title_diff_score = (t1, t2) => {
+    const count_matching_words = (
+        t1.split('_').map(w => w && !!t2.match(w)).reduce((c1, c2) => c1 + c2) +
+        t2.split('_').map(w => w && !!t1.match(w)).reduce((c1, c2) => c1 + c2)
+    )
+    const is_substring = (!!t1.match(t2) || !!t2.match(t1))
+
+    return (count_matching_words < 1 ? -10 : count_matching_words)
+        - Math.abs(t1.split('_').length - t2.split('_').length)
+        + is_substring * 10
+}
+
 const score_imdb_entity = (imdb_entity, query, year) => {
-    imdb_entity.query = extract_movie_name_from_name(imdb_entity.l) + ((year && imdb_entity.y)? '_' + imdb_entity.y : '');
+    imdb_entity.query = extract_movie_name_from_name(imdb_entity.l) + ((year && imdb_entity.y) ? '_' + imdb_entity.y : '');
     imdb_entity.source_query = query
     imdb_entity.source_year = year
-    imdb_entity.score = title_diff_score(query, imdb_entity.query) + 
-        (year? !!year.match(imdb_entity.y) * 5 : 0) +
-        (imdb_entity.q === 'feature') * 20 // indicates that it is a movie
+    imdb_entity.score =
+        // Add score for title similarity
+        title_diff_score(query, imdb_entity.query) +
+        // Add points for matching year
+        (year ? !!year.match(imdb_entity.y) * 5 : 0) +
+        // Add score if it is a movie
+        (imdb_entity.q === 'feature') * 20 +
+        // Add score if it is a video (a few movies are videos in imdb)
+        (imdb_entity.q === 'video') * 10
     return imdb_entity
 }
 
 const lookup_entry = async entry => {
     const query = entry.query[0]
     const year = match_year(query)
-    const query_stripped = (query.match(/_/g) || []).length > 2? strip_year(query) : query;
+    let results = await query_imdb(query)
 
-    let results = (await query_imdb(query)).map(ie => score_imdb_entity(ie, query, year))
-    
-    if(results.length == 0){
+    // Query without the year if no movies where found
+    if (results.filter(r => r.q === 'feature').length == 0) {
         const query_stripped = strip_year(query)
-        results = (await query_imdb(query_stripped)).map(ie => score_imdb_entity(ie, query_stripped, year))
+        results = results.concat(await query_imdb(query_stripped))
     }
 
-    if(results.length == 0 && entry.query.length > 1){
+    // Query with maximum 20 characters (imdb web ui maximum)
+    // if no movies were found
+    if (results.filter(r => r.q === 'feature').length == 0) {
+        const query_stripped = query.slice(0, 20)
+        results = results.concat(await query_imdb(query_stripped))
+    }
+
+    // If we have results at this point, score and pick the best one.
+    if (results.length > 0) {
+        const result = results
+            .map(r => score_imdb_entity(r, query, year))
+            .sort((r1, r2) => r2.score - r1.score)[0]
+        result.source = entry.file;
+        return result
+    }
+    // If no nothing is still found, try next query instead
+    else if (entry.query.length > 1) {
         entry.query = entry.query.slice(1)
         return await lookup_entry(entry)
     }
 
-    if(results.length > 0){
-        const result = results.sort((r1,r2) => r2.score - r1.score)[0]
-        result.source = entry.file;
-        return result
-    }
-    
+    // If we exhaust all queries without finding anything,
+    // return this stump (useful for debuging)
     return {
-        l: entry.query[0],
+        l: query,           // title (use for debuging)
         source: entry.file,
-        score: 0,
+        score: -100,
     }
 }
 
 const main = async () => {
     const movies_filenames_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
     const movies_filenames_filtered = remove_samples(movies_filenames_raw)
-    // const movie_entries = ['/tank/storage/movies/Fast and Furious Collection (2001-2019) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE]/Fast and Furious 6 (2013) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE].mkv'].map(m => extract_movie_name_from_path(m))
-    const movie_entries = movies_filenames_filtered.slice(0,260).map(m => extract_movie_name_from_path(m))
-    // console.log(movie_entries)
-    // console.log(JSON.stringify(movies_filenames_filtered.slice(0,10).map(m => extract_movie_name_from_path(m))))
-    // console.log(JSON.stringify(['/tank/storage/movies/Mission Impossible/Mission Impossible II 2000.mkv'].map(m => extract_movie_name_from_path(m))))
     
+    // const movie_entries = ['/tank/storage/movies/Fast and Furious Collection (2001-2019) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE]/Fast and Furious 6 (2013) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE].mkv'].map(m => extract_movie_name_from_path(m))
+    const movie_entries = movies_filenames_filtered.slice(0, 600).map(m => extract_movie_name_from_path(m))
     const imdb_entries = (await Promise.all(movie_entries.map(m => lookup_entry(m))))
-        // .filter(e => e)
-
-    console.log(imdb_entries)
-    console.log(imdb_entries.map(e => `${e.id}: ${e.l} (${e.y || e.source_year}) \n     File: ${e.source}`).join("\n"))
-
+    console.log(imdb_entries.map(e => `${e.id}: ${e.l} (${e.y || e.source_year}) \n     File: ${e.source.slice(0,100)}\n    Score: ${e.score}`).join("\n"))
     await write_http_cache();
 }
 

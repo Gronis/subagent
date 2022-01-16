@@ -1,4 +1,7 @@
 *.srt
+*.ass
+*.mkv
+*.mp4
 .DS_Store
 http_cache.json
 movies.txt

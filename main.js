@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const http_request = require('./http_request');
 const zip = require('./zip');
+const process = require('child_process');
 
 const unescape_leetspeak = word => {
     const is_leet = word.match(/[0-9]/) && word.match(/[a-zA-Z]/)
@@ -167,6 +168,7 @@ const remove_samples = (movies) => {
 
 // This is just a http request cache to not make imdb ban me while developing
 let REQUEST_CACHE = {};
+let VIDEO_FILE_EXTENSION_PATTERN = /\.(mkv)|(avi)|(mp4)$/g;
 (async () => {
     try {
         const http_cache = await fs.readFile('http_cache.json', 'utf8');
@@ -189,6 +191,12 @@ const request = async url => {
 
 const write_http_cache = async () => {
     await fs.writeFile('http_cache.json', JSON.stringify(REQUEST_CACHE));
+}
+
+const list_video_files = async path => {
+    // No recursion for now
+    return (await fs.readdir(path))
+        .filter(p => p.match(VIDEO_FILE_EXTENSION_PATTERN))
 }
 
 const strip_year = query => {
@@ -327,34 +335,75 @@ const unzip_archive = buffer => {
 const fetch_sub_archive = async url => {
     const request = await http_request(url)
     if(request.statusCode == 200){
-        const buffer = Buffer.from(request.body, "binary")
-        return unzip_archive(buffer)
+        return Buffer.from(request.body, "binary")
     }
-    return ''
+    return Buffer.from([])
+}
+
+const ffs = (video_filename, subtitle_filename) => {
+    return new Promise((accept, reject) => {
+        // console.log('ffs', [video_filename, '-i', subtitle_filename, '-o', subtitle_filename])
+        // process.spawn('ffs', ['--help']).stdout.on('data', (d) => console.log(d.toString() | accept()))
+        const ffs = process.spawn('ffs', [video_filename, '-i', subtitle_filename, '-o', subtitle_filename]);
+        ffs.on('exit', (code) => {
+            if(code == 0){
+                accept();
+            } else {
+                reject();
+            }
+        });
+        ffs.stdout.on('data', d => console.log(d.toString()))
+        ffs.stderr.on('data', d => console.log(d.toString()))
+    })
 }
 
 
 const main = async () => {
-    const rootDir = '/tank/storage/movies/'
-    const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
+    const rootDir = 'mov'
+    // const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
+    const movies_paths_raw = await list_video_files(rootDir)
     const movies_paths_filtered = remove_samples(movies_paths_raw)
         .map(p => p.replace(rootDir, '')) // Remove prepending root dir 
 
-    // const movie_entries = ['/tank/storage/movies/Fast and Furious Collection (2001-2019) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE]/Fast and Furious 6 (2013) (1080p BDRip x265 10bit EAC3 5.1 - xtrem3x) [TAoE].mkv'].map(m => extract_movie_query_from_path(m))
-    const movie_entries = movies_paths_filtered.slice(0, 4).map(m => extract_movie_query_from_path(m))
+    console.log(movies_paths_filtered)
+
+    // const movie_entries = ['/tank/storage/movies/Kill.Bill.Vol.1.mkv'].map(m => extract_movie_query_from_path(m))
+    const movie_entries = movies_paths_filtered.slice(0, 20).map(m => extract_movie_query_from_path(m))
     const imdb_entries = (await Promise.all(movie_entries.map(m => lookup_entry(m))))
         .sort((e1, e2) => e2.score - e1.score)
-    // console.log(imdb_entries.map((e => `${e.id}: ${e.l} (${e.y || e.source_year}) \n     File: ${e.source.slice(0, 100)}\n    Score: ${e.score}`)).join("\n"))
-    
-    //Fetch subs
-    sub_urls = await fetch_sub_urls(imdb_entries[1].id, 'swe')
-    sub_archive = await fetch_sub_archive(sub_urls[0])
-    const sub_file = Object.keys(sub_archive).find(filename => filename.endsWith('.srt'))
-    console.log(`Got "${sub_file}", size: ${sub_archive[sub_file].length}`)
-
-    await fs.writeFile(sub_file, sub_archive[sub_file], 'utf8')
+        
     // Save request cache
     await write_http_cache();
+    
+    console.log(imdb_entries.map((e => `${e.id}: ${e.l} (${e.y || e.source_year}) \n     File: ${e.source.slice(0, 100)}\n    Score: ${e.score}`)).join("\n"))
+    //Fetch subs
+    const sub_extension = /\.(srt)|(ass)$/
+    const language = 'swe'
+    for(let imdb_entry of imdb_entries){
+        sub_urls = await fetch_sub_urls(imdb_entry.id, language)
+        if(sub_urls.length > 0){
+            compressed_archive = await fetch_sub_archive(sub_urls[0])
+            // await fs.writeFile('file.zip', compressed_archive, 'binary')
+            console.log(compressed_archive.length, sub_urls)
+            archive = unzip_archive(compressed_archive)
+            const subtitle_name = Object.keys(archive).find(filename => filename.match(sub_extension))
+            if(subtitle_name){
+                const subtitle = archive[subtitle_name]
+                console.log(`Got "${subtitle_name}", size: ${subtitle.length}`)
+                const video_filename = imdb_entry.source;
+                // TODO: Don't assume srt
+                const subtitle_filename = video_filename.replace(/\.[a-zA-Z0-9]*$/, `.${language}.srt`)
+                await fs.writeFile(`${rootDir}/${subtitle_filename}`, subtitle, 'utf8')
+                console.log(`Syncing "${subtitle_name}"`)
+                try {
+                    await ffs(`${rootDir}/${video_filename}`, `${rootDir}/${subtitle_filename}`);
+                    console.log('OK!')
+                } catch (err) {
+                    console.log("Error for ", video_filename, err)
+                }
+            }
+        }
+    }
 }
 
 main();

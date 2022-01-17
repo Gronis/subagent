@@ -1,7 +1,7 @@
 const fs = require('fs').promises;
 const http_request = require('./http_request');
 const zip = require('./zip');
-const process = require('child_process');
+const proc = require('child_process');
 
 const unescape_leetspeak = word => {
     const is_leet = word.match(/[0-9]/) && word.match(/[a-zA-Z]/)
@@ -168,7 +168,7 @@ const remove_samples = (movies) => {
 
 // This is just a http request cache to not make imdb ban me while developing
 let REQUEST_CACHE = {};
-let VIDEO_FILE_EXTENSION_PATTERN = /\.(mkv)|(avi)|(mp4)$/g;
+let VIDEO_FILE_EXTENSION_PATTERN = /\.((mkv)|(avi)|(mp4))$/;
 (async () => {
     try {
         const http_cache = await fs.readFile('http_cache.json', 'utf8');
@@ -340,35 +340,87 @@ const fetch_sub_archive = async url => {
     return Buffer.from([])
 }
 
-const ffs = (video_filename, subtitle_filename) => {
+// Strange encoding can sometimes mess up srt files.
+// Try to fix them again. Also detect and remove ads.
+const fix_srt = subtitle => {
+    const pattern = /[0-9][0-9]\:[0-9][0-9]\:[0-9][0-9]\,[0-9][0-9][0-9] -->/g
+    let fix_textbox = textbox => {
+        let m = pattern.exec(textbox)
+        while((m = pattern.exec(textbox))){
+            const i = m.index
+            textbox = textbox.slice(0, i) + '\n' + textbox.slice(i)
+        }
+        return textbox
+    }
+    return subtitle
+        .replaceAll(/\r/g, '') // We dont want windows style newline (\r\n)
+        .split('\n\n') // Separate to textboxes
+        .map(fix_textbox)
+        .join('\n\n') // Join textboxes.
+        .replaceAll(/\n\n([0-9][0-9]?[0-9]?[0-9]?\n)?/g, '\n\n') // Remove textbox numbers
+        .split('\n\n')
+        .slice(1) // Remove first textbox. This one if often broken and full of ads.
+        .map((t, i) => `${i+1}\n${t}`)
+        .join('\n\n')
+}
+
+const sync_subtitile = (video_filename, subtitle_filename, method = 'subsync') => {
     return new Promise((accept, reject) => {
-        // console.log('ffs', [video_filename, '-i', subtitle_filename, '-o', subtitle_filename])
-        // process.spawn('ffs', ['--help']).stdout.on('data', (d) => console.log(d.toString() | accept()))
-        const ffs = process.spawn('ffs', [video_filename, '-i', subtitle_filename, '-o', subtitle_filename]);
-        ffs.on('exit', (code) => {
+        const methods = {
+            'subsync': ['-c', '--overwrite', 'sync' ,'--ref', video_filename, '--sub', subtitle_filename, '--out', subtitle_filename],
+            'ffsubsync': [video_filename, '-i', subtitle_filename, '-o', subtitle_filename],
+            './alass': [video_filename, subtitle_filename, subtitle_filename, '--no-split'],
+            'autosubsync': [video_filename, subtitle_filename, subtitle_filename],
+        }
+        const sync_subtitile = proc.spawn(method, methods[method]);
+        let res = {}
+        sync_subtitile.on('exit', (code) => {
             if(code == 0){
-                accept();
+                accept(res);
             } else {
-                reject();
+                reject("Exit code is not 0");
             }
         });
-        ffs.stdout.on('data', d => console.log(d.toString()))
-        ffs.stderr.on('data', d => console.log(d.toString()))
+        const on_data = d => {
+            const data = d.toString()
+            if(!data.match(/[0-9][0-9]\:[0-9][0-9]\:[0-9][0-9]\.[0-9][0-9][0-9]\:/)){
+                process.stdout.write(data)
+            }
+            if(data.match('ERROR')){
+                reject(data);
+            }
+            const score = 
+                data.match(/score: [0-9\.]+/g) || 
+                data.match(/[0-9]+ points/)
+            if(score){
+                const s = score[0]
+                    .replace('score: ', '')
+                    .replace(' points', '')
+                res.score = parseFloat(s)
+            }
+            if(data.match(/ratio is [0-9]+\/[0-9]+/g)){
+                // res.score = 1000000.0
+            }
+        }
+        sync_subtitile.stderr.on('data', on_data)
+        sync_subtitile.stdout.on('data', on_data)
     })
 }
 
 
 const main = async () => {
     const rootDir = 'mov'
+    const language = 'swe'
     // const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
     const movies_paths_raw = await list_video_files(rootDir)
     const movies_paths_filtered = remove_samples(movies_paths_raw)
         .map(p => p.replace(rootDir, '')) // Remove prepending root dir 
+        .slice(4, 5)
 
-    console.log(movies_paths_filtered)
+    // console.log(movies_paths_filtered)
 
-    // const movie_entries = ['/tank/storage/movies/Kill.Bill.Vol.1.mkv'].map(m => extract_movie_query_from_path(m))
-    const movie_entries = movies_paths_filtered.slice(0, 20).map(m => extract_movie_query_from_path(m))
+    // const movie_entries = ['mov/Kill.Bill.Vol.1.mkv'].map(m => extract_movie_query_from_path(m))
+    const movie_entries = movies_paths_filtered.map(m => extract_movie_query_from_path(m))
     const imdb_entries = (await Promise.all(movie_entries.map(m => lookup_entry(m))))
         .sort((e1, e2) => e2.score - e1.score)
         
@@ -378,29 +430,45 @@ const main = async () => {
     console.log(imdb_entries.map((e => `${e.id}: ${e.l} (${e.y || e.source_year}) \n     File: ${e.source.slice(0, 100)}\n    Score: ${e.score}`)).join("\n"))
     //Fetch subs
     const sub_extension = /\.(srt)|(ass)$/
-    const language = 'swe'
     for(let imdb_entry of imdb_entries){
+        console.log("Fetching subs for", `"${imdb_entry.l} (${imdb_entry.y})"`, "language:", language)
         sub_urls = await fetch_sub_urls(imdb_entry.id, language)
-        if(sub_urls.length > 0){
-            compressed_archive = await fetch_sub_archive(sub_urls[0])
-            // await fs.writeFile('file.zip', compressed_archive, 'binary')
-            console.log(compressed_archive.length, sub_urls)
+        console.log("Got", sub_urls.length, "subtitle candidates")
+        for(let sub_url of sub_urls){
+            compressed_archive = await fetch_sub_archive(sub_url)
+            const got_archive = compressed_archive.length > 0;
+            if(!got_archive) {
+                continue;
+            }
+            console.log("Downloaded archive successfully")
             archive = unzip_archive(compressed_archive)
             const subtitle_name = Object.keys(archive).find(filename => filename.match(sub_extension))
-            if(subtitle_name){
-                const subtitle = archive[subtitle_name]
-                console.log(`Got "${subtitle_name}", size: ${subtitle.length}`)
-                const video_filename = imdb_entry.source;
-                // TODO: Don't assume srt
-                const subtitle_filename = video_filename.replace(/\.[a-zA-Z0-9]*$/, `.${language}.srt`)
-                await fs.writeFile(`${rootDir}/${subtitle_filename}`, subtitle, 'utf8')
-                console.log(`Syncing "${subtitle_name}"`)
-                try {
-                    await ffs(`${rootDir}/${video_filename}`, `${rootDir}/${subtitle_filename}`);
-                    console.log('OK!')
-                } catch (err) {
-                    console.log("Error for ", video_filename, err)
-                }
+            if(!subtitle_name){
+                continue;
+            }
+            const subtitle = archive[subtitle_name]
+            console.log(`Got "${subtitle_name}", size: ${subtitle.length}`)
+            const video_filename = imdb_entry.source;
+            // TODO: Don't assume srt
+            const fixed_subtitle = fix_srt(subtitle)
+            const subtitle_filename = video_filename + `.subagent-GENERATED.${language}.srt`
+            await fs.writeFile(`${rootDir}/${subtitle_filename}`, fixed_subtitle, 'utf8')
+            console.log(`Syncing "${subtitle_name}"`)
+            let score = 100000.0
+            try {
+                const result = await sync_subtitile(`${rootDir}/${video_filename}`, `${rootDir}/${subtitle_filename}`, 'subsync');
+                // const result = await sync_subtitile(`${rootDir}/${video_filename}`, `${rootDir}/${subtitle_filename}`, 'ffsubsync');
+                score = result.score || score;
+            } catch (err) {
+                console.log("Error for ", video_filename, err)
+                score = 1000000.0
+            }
+            // if(score < 250000.0){
+            if(score > 100){
+                console.log('OK!\n', 'score:', score)
+                break;
+            } else {
+                console.log("Score is too bad (lower is better). Trying next sub\n", 'score:', score)
             }
         }
     }

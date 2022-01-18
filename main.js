@@ -503,8 +503,23 @@ const download_and_sync_subtitle = async (imdb_entity, language, video_path) => 
     }
 }
 
+const run_imdb_matching_only = async root_directory => {
+    const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
+    // Only works for movies for now
+    const movies_paths_filtered = remove_sample_files(movies_paths_raw)
+        .map(p => p.replace(root_directory, '')) // Unprepend root dir 
+    
+    const imdb_entities = (await Promise.all(movies_paths_filtered
+        .map(m => extract_query_entity_from_path(m))
+        .map(q => fetch_imdb_entity(q))))
+        .map(i => i.id + ": " + i.l + " " + i.y)
+    console.log(imdb_entities.join('\n'))
+    
+    // Save request cache
+    await write_http_cache();
+}
+
 const run_job = async (root_directory, languages) => {
-    // const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
     // Only works for movies for now
     const movies_paths_raw = await list_video_files(root_directory)
     const movies_paths_filtered = remove_sample_files(movies_paths_raw)
@@ -513,10 +528,14 @@ const run_job = async (root_directory, languages) => {
     console.log("Matching movies:", movies_paths_filtered)
     const query_entries = movies_paths_filtered.map(m => extract_query_entity_from_path(m))
     
-    //Download subs
+    // //Download subs
     for(let query_entity of query_entries){
         console.log("Searching for:", query_entity.file)
         imdb_entity = await fetch_imdb_entity(query_entity)
+        if(!imdb_entity.id){
+            console.log("Cannot match", imdb_entity.l, "skipping...")
+            continue;
+        }
         console.log(`Found [${imdb_entity.id}] "${imdb_entity.l} ` + (imdb_entity.y? `(${imdb_entity.y})` : '') + '"')
         const video_filename = imdb_entity.source;
         const video_path = `${root_directory}/${video_filename}`
@@ -533,6 +552,7 @@ const run_job = async (root_directory, languages) => {
 const main = async () => {
     const root_directory = 'mov'
     const languages = ['eng', 'swe']
+    // await run_imdb_matching_only(root_directory)
     await run_job(root_directory, languages)
 }
 

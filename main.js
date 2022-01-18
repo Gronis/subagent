@@ -16,22 +16,31 @@ let REQUEST_CACHE = {};
             REQUEST_CACHE = JSON.parse(http_cache)
         }
     } catch {
-        // No cache file exists. Just skip for now
+        // No cache file exists, or unparseable. Just skip for now
     }
 })();
 
+const write_http_cache = async () => {
+    await fs.writeFile('http_cache.json', JSON.stringify(REQUEST_CACHE));
+}
+
+let request_count = 0;
 const request = async url => {
     if (REQUEST_CACHE[url]) {
         return REQUEST_CACHE[url]
     }
     const response = await http_request(url)
-    REQUEST_CACHE[url] = response
+    if(response.statusCode == 200){
+        REQUEST_CACHE[url] = response
+        request_count++;
+    }
+    if (request_count > 50){
+        await write_http_cache()
+        request_count = 0;
+    }
     return response
 }
 
-const write_http_cache = async () => {
-    await fs.writeFile('http_cache.json', JSON.stringify(REQUEST_CACHE));
-}
 
 
 const unescape_leetspeak = word => {
@@ -547,6 +556,7 @@ const run_job = async (root_directory, languages) => {
     
     // Save request cache
     await write_http_cache();
+    console.log("Finished subagent job...")
 }
 
 
@@ -556,17 +566,14 @@ const main = async () => {
     const watcher = fs.watch(root_directory,)
     // await run_imdb_matching_only(root_directory)
     await run_job(root_directory, languages)
-    let running_job = false;
-    console.log(`Watching director: "${root_directory}"`)
+    console.log(`Watching directory: "${root_directory}"`)
     for await (_ of watcher){
-        running_job = true
         try{
             await run_job(root_directory, languages)
         } catch (err){
             console.log("Error during job", err)
-        } finally {
-            running_job = false
-        }
+        } 
+        console.log(`Watching directory: "${root_directory}"`)
     }
 
 }

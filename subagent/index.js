@@ -563,17 +563,32 @@ const run_job = async (root_directory, languages) => {
 const main = async () => {
     const root_directory = 'mov'
     const languages = ['eng', 'swe']
-    const watcher = fs.watch(root_directory)
     // await run_imdb_matching_only(root_directory)
     await run_job(root_directory, languages)
-    console.log(`Watching directory: "${root_directory}"`)
-    for await (_ of watcher){
-        try{
-            await run_job(root_directory, languages)
-        } catch (err){
-            console.log("Error during job", err)
-        } 
+    
+    if(fs.watch){
+        const watcher = fs.watch(root_directory)
         console.log(`Watching directory: "${root_directory}"`)
+        for await (_ of watcher){
+            try{
+                await run_job(root_directory, languages)
+            } catch (err){
+                console.log("Error during job", err)
+            } 
+            console.log(`Watching directory: "${root_directory}"`)
+        }
+    } else {
+        const hourInterval = 3;
+        console.log(`Scheduled for scanning every ${hourInterval} hours.`)
+        setInterval(async () => {
+            console.log("Starting scheduled scan...")
+            try{
+                await run_job(root_directory, languages)
+            } catch (err){
+                console.log("Error during job", err)
+            } 
+            console.log(`Sleeping for ${hourInterval} hours.`)
+        }, 1000* 3600 * hourInterval)
     }
 
 }

@@ -2,7 +2,7 @@
 # builder image                                                                        #
 ########################################################################################
 
-FROM python:3.8-slim-buster AS builder
+FROM python:3.8-slim-bullseye AS builder
 
 # Set the working directory to /app
 WORKDIR /app
@@ -66,8 +66,9 @@ RUN pyinstaller bin/subsync && pyinstaller -y subsync.spec
 # actual image                                                                         #
 ########################################################################################
 
-FROM python:3.8-slim-buster
+FROM python:3.8-slim-bullseye
 COPY --from=builder /app/subsync/dist/subsync /app
+COPY --from=builder /app/subsync/subsync/key.pub /app
 RUN ln -s /app/subsync /usr/bin/subsync
 
 # install non-def deps

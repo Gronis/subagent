@@ -406,14 +406,14 @@ Entry.prototype.getMode = function () {
 var bytesToNumberLE = function (bytes) {
     var acc = 0;
     for (var i = 0; i < bytes.length; i++)
-        acc += bytes.readUint8(i) << (8*i);
+        acc += bytes.readUInt8(i) << (8*i);
     return acc;
 };
 
 var bytesToNumberBE = function (bytes) {
     var acc = 0;
     for (var i = 0; i < bytes.length; i++)
-        acc = (acc << 8) + bytes.readUint8(i);
+        acc = (acc << 8) + bytes.readUInt8(i);
     return acc;
 };
 

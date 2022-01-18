@@ -46,16 +46,16 @@ const request = async url => {
 const unescape_leetspeak = word => {
     const is_leet = word.match(/[0-9]/) && word.match(/[a-zA-Z]/)
     return is_leet ? word
-        .replaceAll('0', 'o')
-        .replaceAll('1', 'l')
-        .replaceAll('2', 'z')
-        .replaceAll('3', 'e')
-        .replaceAll('4', 'a')
-        .replaceAll('5', 's')
-        .replaceAll('6', 'g')
-        .replaceAll('7', 't')
-        .replaceAll('8', 'b')
-        .replaceAll('9', 'p')
+        .replace(/0/g, 'o')
+        .replace(/1/g, 'l')
+        .replace(/2/g, 'z')
+        .replace(/3/g, 'e')
+        .replace(/4/g, 'a')
+        .replace(/5/g, 's')
+        .replace(/6/g, 'g')
+        .replace(/7/g, 't')
+        .replace(/8/g, 'b')
+        .replace(/9/g, 'p')
         : word;
 }
 
@@ -91,16 +91,16 @@ const extract_year_from_query = (query) => {
     return false;
 }
 
-const extract_query_entity_from_path = (path) => {
+const extract_query_entity_from_path = (filepath) => {
     // Uses filename or dirname to find a good seach term.
-    const filename = path.split('/').splice(-1)[0] || ''
-    const parentname = path.split('/').splice(-2)[0] || ''
-    const parentparentname = path.split('/').splice(-3)[0] || ''
+    const filename = path.basename(filepath)
+    const parentpath = path.dirname(filepath)
+    const parentparentpath = path.dirname(parentpath)
     let results = []
     // If parent name looks like a movie pack, dont use it.
-    if (!is_movie_pack(parentname)) {
+    if (!is_movie_pack(parentpath)) {
         results = [
-            extract_query_from_unstructured_text(parentname),
+            extract_query_from_unstructured_text(parentpath),
             extract_query_from_unstructured_text(filename)
         ]
     } else {
@@ -110,8 +110,8 @@ const extract_query_entity_from_path = (path) => {
 
     // If we still have no year at this point, try upper parent and see
     // if that title contains a year. If not, use old result.
-    if (!results.some(s => extract_year_from_query(s)) && !is_movie_pack(parentparentname)) {
-        const tmp_result = extract_query_from_unstructured_text(parentparentname)
+    if (!results.some(s => extract_year_from_query(s)) && !is_movie_pack(parentparentpath)) {
+        const tmp_result = extract_query_from_unstructured_text(parentparentpath)
         if (extract_year_from_query(tmp_result)) {
             results.push(tmp_result)
         }
@@ -119,7 +119,7 @@ const extract_query_entity_from_path = (path) => {
     // Sort so that we prioritize titles with years,
     // Otherwise sort for the longest title.
     return {
-        parent: parentname,
+        parent: parentpath,
         file: filename,
         query: results.sort((s1, s2) => {
             const year_prio = !!extract_year_from_query(s2) - !!extract_year_from_query(s1)
@@ -177,12 +177,12 @@ const extract_query_from_unstructured_text = (name) => {
     ]
     const regex_year = /^[0-9][0-9][0-9][0-9]$/;
     const words = (name || '')
-        .replaceAll(/\[[^\[]*\]/g, ' ')
-        .replaceAll(/\([^0-9]*\)/g, ' ')
-        .replaceAll(/[']/g, '')
+        .replace(/\[[^\[]*\]/g, ' ')
+        .replace(/\([^0-9]*\)/g, ' ')
+        .replace(/[']/g, '')
         .split(whitespace)
         .filter(w => !regex_remove_words.some(p => w.match(p)))
-        .map(w => w.trim().replaceAll(/[\(|\)|\[|\]]/g, ''))
+        .map(w => w.trim().replace(/[\(|\)|\[|\]]/g, ''))
         .map(w => w.replace(/^0+/, ''))
     const softEndIndex = words
         .findIndex(w => regex_soft_end_words.some(p => w.toLowerCase().match(p)))
@@ -198,7 +198,7 @@ const extract_query_from_unstructured_text = (name) => {
         .map(w => unescape_roman_numbers(w))
         .slice(0, finalEndIndex)
         .join('_').toLowerCase()
-        .replaceAll(/__/g, '_') // Sometimes, dubble underscores can occur
+        .replace(/__/g, '_') // Sometimes, dubble underscores can occur
     return result
 }
 
@@ -206,9 +206,9 @@ const remove_sample_files = file_list => {
     return file_list.filter(p => !p.toLowerCase().match('sample'))
 }
 
-const list_video_files = async path => {
+const list_video_files = async pathname => {
     // TODO: Add file structure search recursion
-    return (await fs.readdir(path))
+    return (await fs.readdir(pathname))
         .filter(p => p.match(VIDEO_EXTENSION_PATTERN))
 }
 
@@ -312,7 +312,12 @@ const request_subtitle_urls = async (imdb_id, language) => {
     const request = await http_request(url)
     // Just use regex to find out which links point to a subtitle file.
     const subUrl = /href="(\/[a-z][a-z]\/subtitleserve\/sub\/[0-9]*)"/g
-    return [...request.body.matchAll(subUrl)].map(m => `https://www.opensubtitles.org${m[1]}`)
+    const links = []
+    let match = null;
+    while(match = subUrl.exec(request.body)){
+        links.push(match[1])
+    }
+    return links.map(m => `https://www.opensubtitles.org${m}`)
 }
 
 const request_subtitle_zip_archive = async url => {
@@ -357,7 +362,11 @@ const detect_text_encoding = buffer => {
 const unzip_archive = buffer => {
     const entries = Object.entries(zip.Reader(buffer).toObject())
         .map(([filename, buffer]) => [filename, buffer.toString(detect_text_encoding(buffer))])
-    return Object.fromEntries(entries)
+    // Object.fromEntries does not work on older nodejs versions (< 12)
+    // Replace with Object.fromEntries in the future.
+    const obj = {}
+    entries.forEach(e => obj[e[0]] = e[1])
+    return obj
 }
 
 // Strange encoding can sometimes mess up srt files.
@@ -374,11 +383,11 @@ const fix_srt = subtitle => {
         return textbox
     }
     return subtitle
-        .replaceAll(/\r/g, '') // We dont want windows style newline (\r\n)
+        .replace(/\r/g, '') // We dont want windows style newline (\r\n)
         .split('\n\n') // Separate to textboxes
         .map(fix_textbox)
         .join('\n\n') // Join textboxes.
-        .replaceAll(/\n\n([0-9][0-9]?[0-9]?[0-9]?\n)?/g, '\n\n') // Remove textbox numbers
+        .replace(/\n\n([0-9][0-9]?[0-9]?[0-9]?\n)?/g, '\n\n') // Remove textbox numbers
         .split('\n\n')
         .slice(1) // Remove first textbox. This one if often broken and full of ads.
         .map((t, i) => `${i+1}\n${t}`)
@@ -497,7 +506,7 @@ const download_and_sync_subtitle = async (imdb_entity, language, video_path) => 
         } else {
             // If subtitle is not correlated. Remove file to indicate that there
             // is no good subtitle yet for this video
-            await fs.rm(subtitle_path)
+            await fs.unlink(subtitle_path)
             console.log("Subtitle sync failed. Trying next sub\n", 'result:', result)
         }
     }
@@ -561,8 +570,24 @@ const run_job = async (root_directory, languages) => {
 
 
 const main = async () => {
-    const root_directory = 'mov'
-    const languages = ['eng', 'swe']
+    const args = process.argv.slice(process.argv.findIndex(a => a.match('subagent')))
+    if(args[1] === '--help' || args.length < 3){
+        // PRint help
+        console.log("Usage: subagent path/to/movies language [language...]")
+        console.log()
+        console.log("Watches a directory of movies and attempts to download and sync subtitles.")
+        console.log(" - Uses imdb to match movies.")
+        console.log(" - Uses opensubtitles.org to fetch subtitles.")
+        console.log(" - Utilizes subsync to sync subtitles.")
+        console.log()
+        console.log("positional arguments:")
+        console.log("  path/to/movies        Directory to scan")
+        console.log("  language              3-letter language code for subtitle")
+
+        return;
+    } 
+    const root_directory = args[1]
+    const languages = args.slice(2)
     // await run_imdb_matching_only(root_directory)
     await run_job(root_directory, languages)
     

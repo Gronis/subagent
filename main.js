@@ -520,6 +520,7 @@ const run_imdb_matching_only = async root_directory => {
 }
 
 const run_job = async (root_directory, languages) => {
+    console.log("Running subagent job...")
     // Only works for movies for now
     const movies_paths_raw = await list_video_files(root_directory)
     const movies_paths_filtered = remove_sample_files(movies_paths_raw)
@@ -552,8 +553,22 @@ const run_job = async (root_directory, languages) => {
 const main = async () => {
     const root_directory = 'mov'
     const languages = ['eng', 'swe']
+    const watcher = fs.watch(root_directory,)
     // await run_imdb_matching_only(root_directory)
     await run_job(root_directory, languages)
+    let running_job = false;
+    console.log(`Watching director: "${root_directory}"`)
+    for await (_ of watcher){
+        running_job = true
+        try{
+            await run_job(root_directory, languages)
+        } catch (err){
+            console.log("Error during job", err)
+        } finally {
+            running_job = false
+        }
+    }
+
 }
 
 main();

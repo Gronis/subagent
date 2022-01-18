@@ -309,21 +309,25 @@ const fetch_imdb_entity = async query_entity => {
 const request_subtitle_urls = async (imdb_id, language) => {
     const id = imdb_id.replace('tt','imdbid-');
     const url = `https://www.opensubtitles.org/en/search/sublanguageid-${language}/${id}`
-    const request = await http_request(url)
+    const response = await request(url)
     // Just use regex to find out which links point to a subtitle file.
     const subUrl = /href="(\/[a-z][a-z]\/subtitleserve\/sub\/[0-9]*)"/g
     const links = []
     let match = null;
-    while(match = subUrl.exec(request.body)){
+    while(match = subUrl.exec(response.body)){
         links.push(match[1])
     }
     return links.map(m => `https://www.opensubtitles.org${m}`)
 }
 
 const request_subtitle_zip_archive = async url => {
-    const request = await http_request(url)
-    if(request.statusCode == 200){
-        return Buffer.from(request.body, "binary")
+    const response = await http_request(url)
+    if(response.statusCode == 200){
+        const archive = Buffer.from(response.body, "binary")
+        // TODO: store in cache.
+        return archive
+    } else {
+        console.log(response)
     }
     return Buffer.from([])
 }

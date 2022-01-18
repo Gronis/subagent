@@ -1,3 +1,6 @@
+// Originally from https://github.com/kriskowal/zip
+// Modified 2022 to remove dependecies.
+//
 // Tom Robinson
 // Kris Kowal
 

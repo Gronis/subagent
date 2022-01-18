@@ -7,22 +7,22 @@ const path = require('path');
 const SUBTITLE_EXTENSION_PATTERN = /\.((?:srt)|(?:ass)|(?:ssa)|())$/
 const VIDEO_EXTENSION_PATTERN = /\.((mkv)|(avi)|(mp4))$/;
 
-// This is just a http request cache to not make imdb ban me while developing
-let REQUEST_CACHE = {};
-(async () => {
-    try {
-        const http_cache = await fs.readFile('http_cache.json', 'utf8');
-        if (http_cache) {
-            REQUEST_CACHE = JSON.parse(http_cache)
-        }
-    } catch {
-        // No cache file exists, or unparseable. Just skip for now
+const read_http_cache = async (cache_path) => {
+    const filepath = path.join(cache_path || './', 'http_cache.json')
+    const http_cache = await fs.readFile(filepath, 'utf8');
+    if (http_cache) {
+        REQUEST_CACHE = JSON.parse(http_cache)
     }
-})();
-
-const write_http_cache = async () => {
-    await fs.writeFile('http_cache.json', JSON.stringify(REQUEST_CACHE));
 }
+
+const write_http_cache = async (cache_path) => {
+    const filepath = path.join(cache_path || './', 'http_cache.json')
+    await fs.writeFile(filepath, JSON.stringify(REQUEST_CACHE));
+}
+// This is just a http request cache to not make imdb ban me while developing
+let CACHE_PATH = './';
+let REQUEST_CACHE = {};
+(async () => { try { await read_http_cache(CACHE_PATH) } catch {} })();
 
 let request_count = 0;
 const request = async url => {
@@ -35,7 +35,7 @@ const request = async url => {
         request_count++;
     }
     if (request_count > 50){
-        await write_http_cache()
+        await write_http_cache(CACHE_PATH)
         request_count = 0;
     }
     return response
@@ -525,11 +525,11 @@ const download_and_sync_subtitle = async (imdb_entity, language, video_path) => 
     }
 }
 
-const run_imdb_matching_only = async root_directory => {
+const run_imdb_matching_only = async root_path => {
     const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
     // Only works for movies for now
     const movies_paths_filtered = remove_sample_files(movies_paths_raw)
-        .map(p => p.replace(root_directory, '')) // Unprepend root dir 
+        .map(p => p.replace(root_path, '')) // Unprepend root path 
     
     const imdb_entities = (await Promise.all(movies_paths_filtered
         .map(m => extract_query_entity_from_path(m))
@@ -538,15 +538,15 @@ const run_imdb_matching_only = async root_directory => {
     console.log(imdb_entities.join('\n'))
     
     // Save request cache
-    await write_http_cache();
+    await write_http_cache(CACHE_PATH);
 }
 
-const run_job = async (root_directory, languages) => {
+const run_job = async (root_path, languages) => {
     console.log("Running subagent job...")
     // Only works for movies for now
-    const movies_paths_raw = await list_video_files(root_directory)
+    const movies_paths_raw = await list_video_files(root_path)
     const movies_paths_filtered = remove_sample_files(movies_paths_raw)
-        .map(p => p.replace(root_directory, '')) // Unprepend root dir 
+        .map(p => p.replace(root_path, '')) // Unprepend root path 
     
     console.log("Matching movies:", movies_paths_filtered)
     const query_entries = movies_paths_filtered.map(m => extract_query_entity_from_path(m))
@@ -561,50 +561,85 @@ const run_job = async (root_directory, languages) => {
         }
         console.log(`Found [${imdb_entity.id}] "${imdb_entity.l} ` + (imdb_entity.y? `(${imdb_entity.y})` : '') + '"')
         const video_filename = imdb_entity.source;
-        const video_path = `${root_directory}/${video_filename}`
+        const video_path = `${root_path}/${video_filename}`
         for (let language of languages){
             await download_and_sync_subtitle(imdb_entity, language, video_path);
         }
     }
     
     // Save request cache
-    await write_http_cache();
+    await write_http_cache(CACHE_PATH);
     console.log("Finished subagent job...")
+}
+
+const print_help = () => {
+    console.log("Usage: subagent [Options...] path/to/movies language [language...]")
+    console.log()
+    console.log("Watches a directory of movies and attempts to download and sync subtitles.")
+    console.log(" - Uses imdb to match movies.")
+    console.log(" - Uses opensubtitles.org to fetch subtitles.")
+    console.log(" - Utilizes subsync to sync subtitles.")
+    console.log()
+    console.log("Optional arguments:")
+    console.log("  --cache path/to/cache Use this path as cache")
+    console.log("  --help                print this help and exit")
+    console.log()
+    console.log("Positional arguments:")
+    console.log("  path/to/movies        Directory to scan")
+    console.log("  language              3-letter language code for subtitle")
+    console.log()
+}
+
+const parse_args = (args) => {
+    let cache_path = './'
+    while((args[0] || '').startsWith('--')){
+        // Print help
+        if(args[0] === '--help'){
+            print_help();
+            process.exit(0);
+        }
+        if(args[0] === '--cache'){
+            cache_path = args[1]
+            if(!cache_path){
+                console.log("No cache path provided")
+                return;
+            }
+            args = args.slice(2)
+        }
+    } 
+    const root_path = args[0]
+    args = args.slice(1)
+    const languages = args
+    return {
+        cache_path,
+        root_path,
+        languages,
+    }
 }
 
 
 const main = async () => {
-    const args = process.argv.slice(process.argv.findIndex(a => a.match('subagent')))
-    if(args[1] === '--help' || args.length < 3){
-        // PRint help
-        console.log("Usage: subagent path/to/movies language [language...]")
-        console.log()
-        console.log("Watches a directory of movies and attempts to download and sync subtitles.")
-        console.log(" - Uses imdb to match movies.")
-        console.log(" - Uses opensubtitles.org to fetch subtitles.")
-        console.log(" - Utilizes subsync to sync subtitles.")
-        console.log()
-        console.log("positional arguments:")
-        console.log("  path/to/movies        Directory to scan")
-        console.log("  language              3-letter language code for subtitle")
+    let args = process.argv.slice(1 + process.argv.findIndex(a => a.match('subagent')))
+    if(args.length < 2){
+        print_help();
+        process.exit(0);
+    }
+    const {cache_path, root_path, languages} = parse_args(args);
+    CACHE_PATH = cache_path
+    // await run_imdb_matching_only(root_path)
 
-        return;
-    } 
-    const root_directory = args[1]
-    const languages = args.slice(2)
-    // await run_imdb_matching_only(root_directory)
-    await run_job(root_directory, languages)
+    await run_job(root_path, languages)
     
     if(fs.watch){
-        const watcher = fs.watch(root_directory)
-        console.log(`Watching directory: "${root_directory}"`)
+        const watcher = fs.watch(root_path)
+        console.log(`Watching directory: "${root_path}"`)
         for await (_ of watcher){
             try{
-                await run_job(root_directory, languages)
+                await run_job(root_path, languages)
             } catch (err){
                 console.log("Error during job", err)
             } 
-            console.log(`Watching directory: "${root_directory}"`)
+            console.log(`Watching directory: "${root_path}"`)
         }
     } else {
         const hourInterval = 3;
@@ -612,7 +647,7 @@ const main = async () => {
         setInterval(async () => {
             console.log("Starting scheduled scan...")
             try{
-                await run_job(root_directory, languages)
+                await run_job(root_path, languages)
             } catch (err){
                 console.log("Error during job", err)
             } 

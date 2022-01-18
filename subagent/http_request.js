@@ -35,7 +35,7 @@ const http_request = (url, body, options) => {
         response.body = body.join('');
         response.statusCode = res.statusCode;
         response.headers = res.headers;
-        if(res.statusCode == 302){
+        if(300 <= res.statusCode && res.statusCode < 400){
             http_request(response.headers.location)
                 .then(r => resolve(r))
                 .catch(reject)

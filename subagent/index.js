@@ -563,7 +563,7 @@ const run_job = async (root_directory, languages) => {
 const main = async () => {
     const root_directory = 'mov'
     const languages = ['eng', 'swe']
-    const watcher = fs.watch(root_directory,)
+    const watcher = fs.watch(root_directory)
     // await run_imdb_matching_only(root_directory)
     await run_job(root_directory, languages)
     console.log(`Watching directory: "${root_directory}"`)

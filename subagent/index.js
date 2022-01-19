@@ -5,7 +5,7 @@ const make_opensubtitle_api = require('./opensubtitle_api')
 const query_extractor = require('./query_extractor')
 const make_imdb_api = require('./imdb_api')
 
-const SUBTITLE_EXTENSION_PATTERN = /\.((?:srt)|(?:ass)|(?:ssa)|())$/
+const SUBTITLE_EXTENSION_PATTERN = /\.((?:srt)|(?:ass)|(?:ssa))$/
 const VIDEO_EXTENSION_PATTERN = /\.((mkv)|(avi)|(mp4))$/;
 
 
@@ -121,7 +121,8 @@ const main = async () => {
             return;
         }
         console.log("Fetching subs for", `"${imdb_entity.title} (${imdb_entity.year})"`, "language:", language)
-        const files = await opensubtitle_api.query(imdb_entity.id, language)
+        const files = (await opensubtitle_api.query(imdb_entity.id, language))
+            .filter(file => file.file_name.match(SUBTITLE_EXTENSION_PATTERN))
         console.log("Got", files.length, "files")
         for(const file of files.slice(0,5)){
             console.log(`Downloading: "${file.file_name}"`)

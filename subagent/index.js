@@ -1,633 +1,278 @@
 const fs = require('fs').promises;
-const http_request = require('./http_request');
-const zip = require('./zip');
 const proc = require('child_process');
 const path = require('path');
+const make_opensubtitle_api = require('./opensubtitle_api')
+const query_extractor = require('./query_extractor')
+const make_imdb_api = require('./imdb_api')
 
 const SUBTITLE_EXTENSION_PATTERN = /\.((?:srt)|(?:ass)|(?:ssa)|())$/
 const VIDEO_EXTENSION_PATTERN = /\.((mkv)|(avi)|(mp4))$/;
 
-const read_http_cache = async (cache_path) => {
-    const filepath = path.join(cache_path || './', 'http_cache.json')
-    const http_cache = await fs.readFile(filepath, 'utf8');
-    if (http_cache) {
-        REQUEST_CACHE = JSON.parse(http_cache)
-    }
-}
-
-const write_http_cache = async (cache_path) => {
-    const filepath = path.join(cache_path || './', 'http_cache.json')
-    await fs.writeFile(filepath, JSON.stringify(REQUEST_CACHE));
-}
-// This is just a http request cache to not make imdb ban me while developing
-let CACHE_PATH = './';
-let REQUEST_CACHE = {};
-(async () => { try { await read_http_cache(CACHE_PATH) } catch {} })();
-
-let request_count = 0;
-const request = async url => {
-    if (REQUEST_CACHE[url]) {
-        return REQUEST_CACHE[url]
-    }
-    const response = await http_request(url)
-    if(response.statusCode == 200){
-        REQUEST_CACHE[url] = response
-        request_count++;
-    }
-    if (request_count > 50){
-        await write_http_cache(CACHE_PATH)
-        request_count = 0;
-    }
-    return response
-}
-
-
-
-const unescape_leetspeak = word => {
-    const is_leet = word.match(/[0-9]/) && word.match(/[a-zA-Z]/)
-    return is_leet ? word
-        .replace(/0/g, 'o')
-        .replace(/1/g, 'l')
-        .replace(/2/g, 'z')
-        .replace(/3/g, 'e')
-        .replace(/4/g, 'a')
-        .replace(/5/g, 's')
-        .replace(/6/g, 'g')
-        .replace(/7/g, 't')
-        .replace(/8/g, 'b')
-        .replace(/9/g, 'p')
-        : word;
-}
-
-const unescape_roman_numbers = word => {
-    return {
-        // 'I': '1',
-        'II': '2',
-        'III': '3',
-        'IV': '4',
-        // 'V': '5',
-        'VI': '6',
-        'VII': '7',
-        'VIII': '8',
-        'IX': '9',
-        // 'X': '10',
-        'XI': '11',
-    }[word] || word
-}
-
-const is_movie_pack = unstructed_text => {
-    return unstructed_text
-        .toLowerCase()
-        .match(/([^r][^e]pack)|(complete)|(collection)/)
-}
-
-const extract_year_from_query = (query) => {
-    query = ' ' + query.split('_').reverse().join(' ')
-    const regex_year = /[ \.\-\_,][0-9][0-9][0-9][0-9]/;
-    const match = query.match(regex_year)
-    if (match) {
-        return match[0].trim()
-    }
-    return false;
-}
-
-const extract_query_entity_from_path = (filepath) => {
-    // Uses filename or dirname to find a good seach term.
-    const filename = path.basename(filepath)
-    const parentpath = path.dirname(filepath)
-    const parentparentpath = path.dirname(parentpath)
-    let results = []
-    // If parent name looks like a movie pack, dont use it.
-    if (!is_movie_pack(parentpath)) {
-        results = [
-            extract_query_from_unstructured_text(parentpath),
-            extract_query_from_unstructured_text(filename)
-        ]
-    } else {
-        results = [extract_query_from_unstructured_text(filename)]
-    }
-    results = results.filter(n => n) // Remove empty strings
-
-    // If we still have no year at this point, try upper parent and see
-    // if that title contains a year. If not, use old result.
-    if (!results.some(s => extract_year_from_query(s)) && !is_movie_pack(parentparentpath)) {
-        const tmp_result = extract_query_from_unstructured_text(parentparentpath)
-        if (extract_year_from_query(tmp_result)) {
-            results.push(tmp_result)
-        }
-    }
-    // Sort so that we prioritize titles with years,
-    // Otherwise sort for the longest title.
-    return {
-        parent: parentpath,
-        file: filename,
-        query: results.sort((s1, s2) => {
-            const year_prio = !!extract_year_from_query(s2) - !!extract_year_from_query(s1)
-            return year_prio || s2.length - s1.length
-        })
-    }
-}
-const extract_query_from_unstructured_text = (name) => {
-    const whitespace = /[ \.\-\_,:?]/
-    const regex_hard_end_words = [
-        /^720p$/,
-        /^1080p$/,
-        /^2160p$/,
-        /^mkv$/,
-        /^mp4$/,
-        /^avi$/,
-        /^x264$/,
-        /^x265$/,
-        /^x266$/,
-        /^h264$/,
-        /^h265$/,
-        /^h266$/,
-        /^10bit$/,
-        /^hdrip$/,
-        /^bdrip$/,
-        /^br$/,
-        /^dts$/,
-        /^bluray$/,
-        /^remux$/,
-        /^unrated$/,
-        /^remastered$/,
-        /^theatrical$/,
-        /^extended$/,
-        /^korsub$/,
-        /^swedish$/,
-        /^english$/,
-        /^nordic$/,
-        /^extras$/,
-        /^extra$/,
-    ]
-    // Only end word if they happen after a word with 4 numbers (a year)
-    const regex_soft_end_words = [
-        /^hevc$/,
-        /^avc$/,
-        /^hdr$/,
-        /^sdr$/,
-        /^hc$/,
-        /^ee$/,
-    ]
-    const regex_remove_words = [
-        /^\+$/,
-        /^\[.*\]/,
-        /^\([^0-9]*\)$/,
-        /^$/,
-    ]
-    const regex_year = /^[0-9][0-9][0-9][0-9]$/;
-    const words = (name || '')
-        .replace(/\[[^\[]*\]/g, ' ')
-        .replace(/\([^0-9]*\)/g, ' ')
-        .replace(/[']/g, '')
-        .split(whitespace)
-        .filter(w => !regex_remove_words.some(p => w.match(p)))
-        .map(w => w.trim().replace(/[\(|\)|\[|\]]/g, ''))
-        .map(w => w.replace(/^0+/, ''))
-    const softEndIndex = words
-        .findIndex(w => regex_soft_end_words.some(p => w.toLowerCase().match(p)))
-    const hardEndIndex = words
-        .findIndex(w => regex_hard_end_words.some(p => w.toLowerCase().match(p)))
-    const yearIndex = words.length - [...words].reverse()
-        .findIndex(w => w.match(regex_year))
-    const endIndices = [words.length, hardEndIndex, yearIndex || softEndIndex]
-        .filter(y => y > 0)
-    const finalEndIndex = Math.min(...endIndices)
-    const result = words
-        .map(w => unescape_leetspeak(w))
-        .map(w => unescape_roman_numbers(w))
-        .slice(0, finalEndIndex)
-        .join('_').toLowerCase()
-        .replace(/__/g, '_') // Sometimes, dubble underscores can occur
-    return result
-}
-
-const remove_sample_files = file_list => {
-    return file_list.filter(p => !p.toLowerCase().match('sample'))
-}
-
-const list_video_files = async pathname => {
-    // TODO: Add file structure search recursion
-    return (await fs.readdir(pathname))
-        .filter(p => p.match(VIDEO_EXTENSION_PATTERN))
-}
-
-const trim_year_from_query = query => {
-    return query.replace(/_[0-9][0-9][0-9][0-9]$/, '')
-}
-
-const escape_regex = pattern => {
-    // $& means the whole matched string
-    return pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
-}
-
-// Scores similar queries. Higher score is "more similar"
-const compare_query = (t1, t2) => {
-    t1 = escape_regex(t1)
-    t2 = escape_regex(t2)
-    t1words = t1.split('_').filter(w => w)
-    t2words = t2.split('_').filter(w => w)
-    const count_matching_words = (
-        t1words.map(w => w && !!t2.match(w)).reduce((c1, c2) => c1 + c2) +
-        t2words.map(w => w && !!t1.match(w)).reduce((c1, c2) => c1 + c2)
-    )
-    const count_missing_words = (
-        t1words.map(w => w && !t2.match(w)).reduce((c1, c2) => c1 + c2) +
-        t2words.map(w => w && !t1.match(w)).reduce((c1, c2) => c1 + c2)
-    )
-    const is_substring = 0 + !!(t1.match(t2) || t2.match(t1))
-    const no_matching_words = (count_matching_words <= 0)
-
-    return is_substring * 10
-        + count_matching_words
-        - count_missing_words
-        - no_matching_words * 10
-        - Math.abs(t1words.length - t2words.length) * 2
-}
-
-const score_imdb_entity = (imdb_entity) => {
-    imdb_entity.query = extract_query_from_unstructured_text(imdb_entity.l) + ((imdb_entity.source_year && imdb_entity.y) ? '_' + imdb_entity.y : '');
-    imdb_entity.score =
-        // Add score for title similarity
-        compare_query(imdb_entity.source_query, imdb_entity.query) +
-        // Add points for matching year
-        (imdb_entity.source_year ? !!imdb_entity.source_year.match(imdb_entity.y) * 10 : 0) +
-        // Add score if it is a movie
-        (imdb_entity.q === 'feature') * 20 +
-        // Add score if it is a video (a few movies are videos in imdb)
-        (imdb_entity.q === 'video') * 10
-    return imdb_entity
-}
-
-const request_imdb_entity = async (query, year) => {
-    const url = `https://v2.sg.media-imdb.com/suggestion/${query[0]}/${query}.json`
-    const response = await request(url)
-    if (response.statusCode == 200) {
-        return (JSON.parse(response.body).d || [])
-            .map(r => {
-                r.source_year = year
-                r.source_query = query
-                return r
-            })
-    }
-    return []
-}
-
-const fetch_imdb_entity = async query_entity => {
-    let imdb_entities = []
-    for (const query of query_entity.query) {
-        const year = extract_year_from_query(query)
-        imdb_entities = imdb_entities.concat(await request_imdb_entity(query, year))
-        const query_stripped = trim_year_from_query(query)
-        imdb_entities = imdb_entities.concat(await request_imdb_entity(query_stripped, year))
-
-        // Query with maximum 20 characters (imdb web ui maximum)
-        // if no movies were found
-        if (imdb_entities.filter(r => r.q === 'feature').length == 0) {
-            const query_stripped = query.slice(0, 20)
-            imdb_entities = imdb_entities.concat(await request_imdb_entity(query_stripped, year))
-        }
-    }
-    // If we have imdb_entities at this point, score and pick the best one.
-    if (imdb_entities.length > 0) {
-        const imdb_entity = imdb_entities
-            .map(r => score_imdb_entity(r))
-            .sort((r1, r2) => r2.score - r1.score)[0]
-        imdb_entity.source = query_entity.file;
-        return imdb_entity
-    }
-
-    // If we exhaust all queries without finding anything,
-    // return this stump (useful for debuging)
-    return {
-        l: query_entity.query.join(' | '),
-        source: query_entity.file,
-        score: -100,
-    }
-}
-
-const request_subtitle_urls = async (imdb_id, language) => {
-    const id = imdb_id.replace('tt','imdbid-');
-    const url = `https://www.opensubtitles.org/en/search/sublanguageid-${language}/${id}`
-    const response = await request(url)
-    // Just use regex to find out which links point to a subtitle file.
-    const subUrl = /href="(\/[a-z][a-z]\/subtitleserve\/sub\/[0-9]*)"/g
-    const links = []
-    let match = null;
-    while(match = subUrl.exec(response.body)){
-        links.push(match[1])
-    }
-    return links.map(m => `https://www.opensubtitles.org${m}`)
-}
-
-const request_subtitle_zip_archive = async url => {
-    const response = await http_request(url)
-    if(response.statusCode == 200){
-        const archive = Buffer.from(response.body, "binary")
-        // TODO: store in cache.
-        return archive
-    } else {
-        console.log(response)
-    }
-    return Buffer.from([])
-}
-
-const detect_text_encoding = buffer => {
-    // Checks "magic bytes" in the beginning to detect utf8 encoding.
-    if(buffer.length > 2 && buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF){
-        return 'utf8'
-    }
-    // If no magic bytes exists, check if text follows utf8 standard.
-    // e.g, first non-ascii character is in [0xC0,0xF8]
-    // following blocks
-    for(let i = 0; i < buffer.length; i++){
-        const char = buffer[i]
-        if (0xC0 <= char && char < 0xF8){
-            const j = i;
-            let first_char = true;
-            i++;
-            for(; i < buffer.length && (i-j) < 64; i++){
-                const char = buffer[i]
-                if (0x80 <= char && char < 0xC0){
-                    first_char = false;
-                } else if(char < 0x80 && !first_char) {
-                    break;
-                } else if(first_char){
-                    return 'binary';
-                }
-            }
-        } else if(0x80 <= char && char < 0xC0) {
-            return 'binary'
-        }
-    }
-    return 'utf8'
-}
-
-const unzip_archive = buffer => {
-    const entries = Object.entries(zip.Reader(buffer).toObject())
-        .map(([filename, buffer]) => [filename, buffer.toString(detect_text_encoding(buffer))])
-    // Object.fromEntries does not work on older nodejs versions (< 12)
-    // Replace with Object.fromEntries in the future.
-    const obj = {}
-    entries.forEach(e => obj[e[0]] = e[1])
-    return obj
-}
-
-// Strange encoding can sometimes mess up srt files.
-// Try to fix them again. 
-// Also detect and remove ads. <-- Not done yet
-const fix_srt = subtitle => {
-    const pattern = /[0-9][0-9]\:[0-9][0-9]\:[0-9][0-9]\,[0-9][0-9][0-9] -->/g
-    let fix_textbox = textbox => {
-        let m = pattern.exec(textbox)
-        while((m = pattern.exec(textbox))){
-            const i = m.index
-            textbox = textbox.slice(0, i) + '\n' + textbox.slice(i)
-        }
-        return textbox
-    }
-    return subtitle
-        .replace(/\r/g, '') // We dont want windows style newline (\r\n)
-        .split('\n\n') // Separate to textboxes
-        .map(fix_textbox)
-        .join('\n\n') // Join textboxes.
-        .replace(/\n\n([0-9][0-9]?[0-9]?[0-9]?\n)?/g, '\n\n') // Remove textbox numbers
-        .split('\n\n')
-        .slice(1) // Remove first textbox. This one if often broken and full of ads.
-        .map((t, i) => `${i+1}\n${t}`)
-        .join('\n\n')
-}
-
-const sync_subtitle = (video_filename, subtitle_filename, method = 'subsync') => {
-    return new Promise(accept => {
-        const methods = {
-            'subsync': [
-                // Need loglevel INFO to read status of sync
-                '-c', '--overwrite', '--loglevel=INFO', 
-                'sync' ,
-                '--ref', video_filename, 
-                '--sub', subtitle_filename, 
-                '--out', subtitle_filename
-            ],
-            // These will probably not be used (Gives bad results)
-            'ffsubsync': [video_filename, '-i', subtitle_filename, '-o', subtitle_filename],
-            'alass': [video_filename, subtitle_filename, subtitle_filename, '--no-split'],
-            'autosubsync': [video_filename, subtitle_filename, subtitle_filename],
-        }
-        const sync_subtitle = proc.spawn(method, methods[method]);
-        let result = {
-            path: subtitle_filename,
-        }
-        sync_subtitle.on('exit', (code) => {
-            if(code == 0){
-                accept(result);
-            } else {
-                result.correlated = false
-                accept(result);
-            }
-        });
-        const on_data = d => {
-            const data = d.toString()
-            if(!data.match(/[0-9][0-9]\:[0-9][0-9]\:[0-9][0-9]\.[0-9][0-9][0-9]\:/)){
-                process.stdout.write(data)
-            }
-            if(data.match('ERROR')){
-                console.log("Got error", data)
-                result.correlated = false
-                accept(result);
-            }
-            const score = data.match(/score: ([0-9\.]+)/)
-            if(score){
-                result.score = parseFloat(score[1])
-            }
-            const points = data.match(/points=([0-9]+)/)
-            if(points){
-                result.points = parseFloat(points[1])
-            }
-            const maxChange = data.match(/maxChange=([0-9]+\.[0-9]+)/)
-            if(maxChange){
-                const m = parseFloat(maxChange[1])
-                result.maxChange = m;
-            }
-            const correlated = data.match(/correlated=((?:False)|(?:True))/)
-            if(correlated){
-                result.correlated = correlated[1] === 'True'
-            }
-        }
-        sync_subtitle.stderr.on('data', on_data)
-        sync_subtitle.stdout.on('data', on_data)
-    })
-}
-
-
-const download_and_sync_subtitle = async (imdb_entity, language, video_path) => {
-    const subtitles = []
-    const video_filename = path.basename(video_path)
-    const video_parent_path = path.dirname(video_path)
-    const subtitle_filename = video_filename + `.subagent-GENERATED.${language}`
-    const has_subs = (await fs.readdir(video_parent_path))
-        .filter(p => p.match(subtitle_filename) && p.match(SUBTITLE_EXTENSION_PATTERN)).length > 0
-    if(has_subs){
-        console.log(`"${imdb_entity.l} (${imdb_entity.y})"`, "already has subtitles for language:", language, "skipping..." )
-        return;
-    }
-    console.log("Fetching subs for", `"${imdb_entity.l} (${imdb_entity.y})"`, "language:", language)
-    const sub_urls = await request_subtitle_urls(imdb_entity.id, language)
-    console.log("Got", sub_urls.length, "subtitle candidates")
-    for(let sub_url of sub_urls.slice(0,5)){
-        compressed_archive = await request_subtitle_zip_archive(sub_url)
-        const got_archive = compressed_archive.length > 0;
-        if(!got_archive) {
-            console.log("Download failed")
-            continue;
-        }
-        console.log("Download successful")
-        archive = unzip_archive(compressed_archive)
-        const subtitle_name = Object.keys(archive).find(filename => filename.match(SUBTITLE_EXTENSION_PATTERN))
-        if(!subtitle_name){
-            continue;
-        }
-        const subtitle = archive[subtitle_name]
-        console.log(`Got subtitle file: "${subtitle_name}", size: ${subtitle.length}`)
-        const subtitle_ext = subtitle_name.match(SUBTITLE_EXTENSION_PATTERN)[1]
-        const subtitle_path = `${video_parent_path}/${subtitle_filename}.${subtitle_ext}`
-        const fixed_subtitle = subtitle_ext === 'srt'? fix_srt(subtitle) : subtitle
-        await fs.writeFile(subtitle_path, fixed_subtitle, 'utf8')
-        console.log(`Syncing "${subtitle_name}"`)
-        let result = await sync_subtitle(video_path, subtitle_path, 'subsync');
-        if(result.correlated){
-            console.log('Sync OK!\n', 'result:', result)
-            result.contents = await fs.readFile(subtitle_path, 'utf8')
-            result.score = (result.points || 0)/Math.sqrt(result.maxChange || 10000)
-            subtitles.push(result)
-            // If maximum change is less than 1 sec, the subtitle was probably a good fit from
-            // the start and we should use it.
-            if(result.maxChange < 1.0){
-                break;
-            } else {
-                console.log("Fit might not be so good, so will try and compare more subtitles...")
-            }
-        } else {
-            // If subtitle is not correlated. Remove file to indicate that there
-            // is no good subtitle yet for this video
-            await fs.unlink(subtitle_path)
-            console.log("Subtitle sync failed. Trying next sub\n", 'result:', result)
-        }
-    }
-    // Take the best subtitle 
-    // (The one with the most number of synced points, scaled by max change)
-    const subtitle = subtitles
-        .sort((s1, s2) => s2.score - s1.score)
-        .find(() => true)
-    if(subtitle){
-        console.log(`Done, writing subtitle to "${subtitle.path}"`)
-        await fs.writeFile(subtitle.path, subtitle.contents, 'utf8')
-    }
-}
-
-const run_imdb_matching_only = async root_path => {
-    const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
-    // Only works for movies for now
-    const movies_paths_filtered = remove_sample_files(movies_paths_raw)
-        .map(p => p.replace(root_path, '')) // Unprepend root path 
-    
-    const imdb_entities = (await Promise.all(movies_paths_filtered
-        .map(m => extract_query_entity_from_path(m))
-        .map(q => fetch_imdb_entity(q))))
-        .map(i => i.id + ": " + i.l + " " + i.y)
-    console.log(imdb_entities.join('\n'))
-    
-    // Save request cache
-    await write_http_cache(CACHE_PATH);
-}
-
-const run_job = async (root_path, languages) => {
-    console.log("Running subagent job...")
-    // Only works for movies for now
-    const movies_paths_raw = await list_video_files(root_path)
-    const movies_paths_filtered = remove_sample_files(movies_paths_raw)
-        .map(p => p.replace(root_path, '')) // Unprepend root path 
-    
-    console.log("Matching movies:", movies_paths_filtered)
-    const query_entries = movies_paths_filtered.map(m => extract_query_entity_from_path(m))
-    
-    // //Download subs
-    for(let query_entity of query_entries){
-        console.log("Searching for:", query_entity.file)
-        imdb_entity = await fetch_imdb_entity(query_entity)
-        if(!imdb_entity.id){
-            console.log("Cannot match", imdb_entity.l, "skipping...")
-            continue;
-        }
-        console.log(`Found [${imdb_entity.id}] "${imdb_entity.l} ` + (imdb_entity.y? `(${imdb_entity.y})` : '') + '"')
-        const video_filename = imdb_entity.source;
-        const video_path = `${root_path}/${video_filename}`
-        for (let language of languages){
-            await download_and_sync_subtitle(imdb_entity, language, video_path);
-        }
-    }
-    
-    // Save request cache
-    await write_http_cache(CACHE_PATH);
-    console.log("Finished subagent job...")
-}
-
-const print_help = () => {
-    console.log("Usage: subagent [Options...] path/to/movies language [language...]")
-    console.log()
-    console.log("Watches a directory of movies and attempts to download and sync subtitles.")
-    console.log(" - Uses imdb to match movies.")
-    console.log(" - Uses opensubtitles.org to fetch subtitles.")
-    console.log(" - Utilizes subsync to sync subtitles.")
-    console.log()
-    console.log("Optional arguments:")
-    console.log("  --cache path/to/cache Use this path as cache")
-    console.log("  --help                print this help and exit")
-    console.log()
-    console.log("Positional arguments:")
-    console.log("  path/to/movies        Directory to scan")
-    console.log("  language              3-letter language code for subtitle")
-    console.log()
-}
-
-const parse_args = (args) => {
-    let cache_path = './'
-    while((args[0] || '').startsWith('--')){
-        // Print help
-        if(args[0] === '--help'){
-            print_help();
-            process.exit(0);
-        }
-        if(args[0] === '--cache'){
-            cache_path = args[1]
-            if(!cache_path){
-                console.log("No cache path provided")
-                return;
-            }
-            args = args.slice(2)
-        }
-    } 
-    const root_path = args[0]
-    args = args.slice(1)
-    const languages = args
-    return {
-        cache_path,
-        root_path,
-        languages,
-    }
-}
-
 
 const main = async () => {
+
+    const remove_sample_files = file_list => {
+        return file_list.filter(p => !p.toLowerCase().match('sample'))
+    }
+    
+    const list_video_files = async pathname => {
+        // TODO: Add file structure search recursion
+        return (await fs.readdir(pathname))
+            .filter(filename => filename.match(VIDEO_EXTENSION_PATTERN))
+            .map(filename => path.join(pathname, filename))
+    }
+    
+    // Strange encoding can sometimes mess up srt files.
+    // Try to fix them again. 
+    // Also detect and remove ads. <-- Not done yet
+    const fix_srt = subtitle => {
+        const pattern = /[0-9][0-9]\:[0-9][0-9]\:[0-9][0-9]\,[0-9][0-9][0-9] -->/g
+        let fix_textbox = textbox => {
+            let m = pattern.exec(textbox)
+            while((m = pattern.exec(textbox))){
+                const i = m.index
+                textbox = textbox.slice(0, i) + '\n' + textbox.slice(i)
+            }
+            return textbox
+        }
+        return subtitle
+            .replace(/\r/g, '') // We dont want windows style newline (\r\n)
+            .split('\n\n') // Separate to textboxes
+            .map(fix_textbox)
+            .join('\n\n') // Join textboxes.
+            .replace(/\n\n([0-9][0-9]?[0-9]?[0-9]?\n)?/g, '\n\n') // Remove textbox numbers
+            .split('\n\n')
+            .slice(1) // Remove first textbox. This one if often broken and full of ads.
+            .map((t, i) => `${i+1}\n${t}`)
+            .join('\n\n')
+    }
+    
+    const sync_subtitle = (video_filename, subtitle_filename, method = 'subsync') => {
+        return new Promise(accept => {
+            const methods = {
+                'subsync': [
+                    // Need loglevel INFO to read status of sync
+                    '-c', '--overwrite', '--loglevel=INFO', 
+                    'sync' ,
+                    '--ref', video_filename, 
+                    '--sub', subtitle_filename, 
+                    '--out', subtitle_filename
+                ],
+                // These will probably not be used (Gives bad results)
+                'ffsubsync': [video_filename, '-i', subtitle_filename, '-o', subtitle_filename],
+                'alass': [video_filename, subtitle_filename, subtitle_filename, '--no-split'],
+                'autosubsync': [video_filename, subtitle_filename, subtitle_filename],
+            }
+            const sync_subtitle = proc.spawn(method, methods[method]);
+            let result = {
+                path: subtitle_filename,
+            }
+            sync_subtitle.on('exit', (code) => {
+                if(code == 0){
+                    accept(result);
+                } else {
+                    result.correlated = false
+                    accept(result);
+                }
+            });
+            const on_data = d => {
+                const data = d.toString()
+                if(!data.match(/[0-9][0-9]\:[0-9][0-9]\:[0-9][0-9]\.[0-9][0-9][0-9]\:/)){
+                    process.stdout.write(data)
+                }
+                if(data.match('ERROR')){
+                    console.log("Got error", data)
+                    result.correlated = false
+                    accept(result);
+                }
+                const score = data.match(/score: ([0-9\.]+)/)
+                if(score){
+                    result.score = parseFloat(score[1])
+                }
+                const points = data.match(/points=([0-9]+)/)
+                if(points){
+                    result.points = parseFloat(points[1])
+                }
+                const maxChange = data.match(/maxChange=([0-9]+\.[0-9]+)/)
+                if(maxChange){
+                    const m = parseFloat(maxChange[1])
+                    result.maxChange = m;
+                }
+                const correlated = data.match(/correlated=((?:False)|(?:True))/)
+                if(correlated){
+                    result.correlated = correlated[1] === 'True'
+                }
+            }
+            sync_subtitle.stderr.on('data', on_data)
+            sync_subtitle.stdout.on('data', on_data)
+        })
+    }
+    
+    
+    const download_and_sync_subtitle = async (imdb_entity, language, video_path) => {
+        const subtitles = []
+        const video_filename = path.basename(video_path)
+        const video_parent_path = path.dirname(video_path)
+        const subtitle_filename = video_filename + `.subagent-GENERATED.${language}`
+        const has_subs = (await fs.readdir(video_parent_path))
+            .filter(p => p.match(subtitle_filename) && p.match(SUBTITLE_EXTENSION_PATTERN)).length > 0
+        if(has_subs){
+            console.log(`"${imdb_entity.title} (${imdb_entity.year})"`, "already has subtitles for language:", language, "skipping..." )
+            return;
+        }
+        console.log("Fetching subs for", `"${imdb_entity.title} (${imdb_entity.year})"`, "language:", language)
+        const files = await opensubtitle_api.query(imdb_entity.id, language)
+        console.log("Got", files.length, "files")
+        for(const file of files.slice(0,5)){
+            console.log(`Downloading: "${file.file_name}"`)
+            const subtitle = await opensubtitle_api.download(file);
+            if(!subtitle){
+                console.log(`Failed to download: "${file.file_name}"`)
+                continue;
+            }
+            const subtitle_ext = file.file_name.match(SUBTITLE_EXTENSION_PATTERN)[1]
+            const subtitle_path = `${video_parent_path}/${subtitle_filename}.${subtitle_ext}`
+            const fixed_subtitle = subtitle_ext === 'srt'? fix_srt(subtitle) : subtitle
+            await fs.writeFile(subtitle_path, fixed_subtitle, 'utf8')
+            console.log(`Syncing "${file.file_name}"`)
+            let result = await sync_subtitle(video_path, subtitle_path, 'subsync');
+            if(result.correlated){
+                console.log('Sync OK!\n', 'result:', result)
+                result.contents = await fs.readFile(subtitle_path, 'utf8')
+                result.score = (result.points || 0)/Math.sqrt(result.maxChange || 10000)
+                subtitles.push(result)
+                // If maximum change is less than 1 sec, the subtitle was probably a good fit from
+                // the start and we should use it.
+                if(result.maxChange < 1.0){
+                    break;
+                } else {
+                    console.log("Fit might not be so good, so will try and compare more subtitles...")
+                }
+            } else {
+                // If subtitle is not correlated. Remove file to indicate that there
+                // is no good subtitle yet for this video
+                await fs.unlink(subtitle_path)
+                console.log("Subtitle sync failed. Trying next sub\n", 'result:', result)
+            }
+        }
+        // Take the best subtitle 
+        // (The one with the most number of synced points, scaled by max change)
+        const subtitle = subtitles
+            .sort((s1, s2) => s2.score - s1.score)
+            .find(() => true)
+        if(subtitle){
+            console.log(`Done, writing subtitle to "${subtitle.path}"`)
+            await fs.writeFile(subtitle.path, subtitle.contents, 'utf8')
+        }
+    }
+    
+    const run_imdb_matching_only = async root_path => {
+        const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
+        // Only works for movies for now
+        const movies_paths_filtered = remove_sample_files(movies_paths_raw)
+            .map(p => p.replace(root_path, '')) // Unprepend root path 
+            .slice(0,100)
+        
+        const imdb_entities = (await Promise.all(movies_paths_filtered
+            .map(m => query_extractor.from_path(m))
+            // .map(v => v.query)))
+            .map(q => imdb_api.query(q))))
+            .map(i => i.id + ": " + i.title + " " + i.year)
+        console.log(imdb_entities.join('\n'))
+    }
+    
+    const run_job = async (root_path, languages) => {
+        console.log("Running subagent job...")
+        // Only works for movies for now
+        const movies_paths = remove_sample_files(await list_video_files(root_path)) 
+        
+        console.log("Matching movies:", movies_paths)
+        const video_paths_and_query_list = movies_paths.map(video_path => ({ 
+            video_path, 
+            query: query_extractor.from_path(video_path.replace(root_path, '')) 
+            // Leaving root path before extracting query might give odd matches, so remove it.
+        }))
+        
+        //Download subs
+        for(const { video_path, query } of video_paths_and_query_list){
+            console.log("Searching for:", query)
+            imdb_entity = await imdb_api.query(query)
+            if(!imdb_entity.id){
+                console.log("Cannot match", imdb_entity.l, "skipping...")
+                continue;
+            }
+            console.log(`Found [${imdb_entity.id}] "${imdb_entity.title} ` + (imdb_entity.year? `(${imdb_entity.year})` : '') + '"')
+            for (let language of languages){
+                await download_and_sync_subtitle(imdb_entity, language, video_path);
+                if(opensubtitle_api.blocked()){
+                    console.log("Too many download requests.")
+                    console.log("Api keys will reset within 24 hours.")
+                    console.log("Stopping job early...")
+                    return;
+                }
+            }
+        }
+        
+        console.log("Finished subagent job...")
+    }
+    
+    const print_help = () => {
+        console.log("Usage: subagent [Options...] path/to/movies language [language...]")
+        console.log()
+        console.log("Watches a directory of movies and attempts to download and sync subtitles.")
+        console.log(" - Uses imdb to match movies.")
+        console.log(" - Uses opensubtitles.org to fetch subtitles.")
+        console.log(" - Utilizes subsync to sync subtitles.")
+        console.log()
+        console.log("Optional arguments:")
+        console.log("  --cache path/to/cache Use this path as cache")
+        console.log("  --help                print this help and exit")
+        console.log()
+        console.log("Positional arguments:")
+        console.log("  path/to/movies        Directory to scan")
+        console.log("  language              3-letter language code for subtitle")
+        console.log()
+    }
+    
+    const parse_args = (args) => {
+        let cache_path = './'
+        while((args[0] || '').startsWith('--')){
+            // Print help
+            if(args[0] === '--help'){
+                print_help();
+                process.exit(0);
+            }
+            if(args[0] === '--cache'){
+                cache_path = args[1]
+                if(!cache_path){
+                    console.log("No cache path provided")
+                    return;
+                }
+                args = args.slice(2)
+            }
+        } 
+        const root_path = args[0]
+        args = args.slice(1)
+        const languages = args
+        return {
+            cache_path,
+            root_path,
+            languages,
+        }
+    }
+
     let args = process.argv.slice(1 + process.argv.findIndex(a => a.match('subagent')))
     if(args.length < 2){
         print_help();
         process.exit(0);
     }
     const {cache_path, root_path, languages} = parse_args(args);
-    CACHE_PATH = cache_path
+    const api_keys = []
+    const imdb_api = await make_imdb_api(cache_path)
+    const opensubtitle_api = await make_opensubtitle_api(cache_path, api_keys)
     // await run_imdb_matching_only(root_path)
-
+    // process.exit()
+    
     await run_job(root_path, languages)
     
     if(fs.watch){

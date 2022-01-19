@@ -1,22 +1,22 @@
 const http = require('http');
 const https = require('https');
 
-const http_request = (url, body, options) => {
-  body = body || "";
+const http_request = (url, options) => {
   url = new URL(url);
-  const secure = (url.protocol != null && url.protocol.includes('https')) || url.port == 443;
   options = options || {};
+  const secure = (url.protocol != null && url.protocol.includes('https')) || url.port == 443;
+  const body = options.body
   options = {
     hostname: url.hostname,
     port: url.port || (secure? 443 : 80),
-    path: url.pathname,
+    path: url.pathname + url.search,
     method: options.method || 'GET',
     headers: {
-      'Content-Length': Buffer.byteLength(body),
+      'Accept': '*/*',
+      'Content-Length': Buffer.byteLength(body || ''),
       ...(options.headers || {})
     }
   };
-
   const module = secure? https : http;
   
   return new Promise((resolve, reject) => {
@@ -36,9 +36,10 @@ const http_request = (url, body, options) => {
         response.statusCode = res.statusCode;
         response.headers = res.headers;
         if(300 <= res.statusCode && res.statusCode < 400){
-            http_request(response.headers.location)
-                .then(r => resolve(r))
-                .catch(reject)
+          console.log(response)
+          http_request(response.headers.location)
+              .then(r => resolve(r))
+              .catch(reject)
         } else {
             resolve(response)
         }
@@ -48,8 +49,9 @@ const http_request = (url, body, options) => {
     req.on('error', (e) => {
       reject(`problem with request: ${e.message}`);
     });
-    
-    req.write(body);
+    if(body){
+      req.write(body);
+    }
     req.end();
   })
 }

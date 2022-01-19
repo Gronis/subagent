@@ -30,7 +30,7 @@ const make_api = async (cache_path) => {
     }
     // This is just a http request cache to not make imdb ban me while developing
     const cache_loaded = await read_http_cache();
-    console.log('Loaded imdb cache: ', cache_loaded)
+    // console.log('Loaded imdb cache: ', cache_loaded)
     
     const cached_http_request = async url => {
         if (request_cache[url]) {
@@ -50,21 +50,29 @@ const make_api = async (cache_path) => {
         return response
     }
 
+    const count_underscores = (text) => {
+        return (text.match(/_/g) || []).length
+    }
+
     const score = (imdb_entity) => {
-        return (// Add score for title similarity
+        const year_score = (imdb_entity.source.year == imdb_entity.year) * 5 
+            -(Math.abs(imdb_entity.source.year - imdb_entity.year) ** 2)
+        const score = (// Add score for title similarity
             query_extractor.compare(imdb_entity.source.query, imdb_entity.query) +
             // Add points for matching year
-            (imdb_entity.source_year ? !!imdb_entity.source.year.match(imdb_entity.year) * 10 : 0) +
+            ((imdb_entity.source.year && imdb_entity.year)? year_score : 0) +
             // Add score if it is a movie
             (imdb_entity.type === 'feature') * 20 +
             // Add score if it is a video (a few movies are videos in imdb)
             (imdb_entity.type === 'video') * 10
-        )
+            ) / Math.sqrt(Math.log(imdb_entity.rank))
+        return score
     }
     
-    const request = async (query, year) => {
+    const request = async (query, year, original_query) => {
         const url = `https://v2.sg.media-imdb.com/suggestion/${query[0]}/${query}.json`
         const response = await cached_http_request(url)
+        // const year = query_extractor.year(original_query)
         if (response.statusCode == 200) {
             return (JSON.parse(response.body).d || [])
                 .map(r => {
@@ -73,11 +81,12 @@ const make_api = async (cache_path) => {
                         id: r.id,
                         title: r.l,
                         type: r.q,
-                        year: r.y,
+                        rank: parseInt(r.rank || '10000000'),
+                        year: parseInt(r.y || '0'),
                         query: q,
                         source: {
-                            year,
-                            query,
+                            year: parseInt(year || '0'),
+                            query: original_query || query,
                         }
                     }
                 })
@@ -91,15 +100,32 @@ const make_api = async (cache_path) => {
             const year = query_extractor.year(query)
             imdb_entities = imdb_entities.concat(await request(query, year))
             const query_stripped = query_extractor.trim_year(query)
-            imdb_entities = imdb_entities.concat(await request(query_stripped, year))
+            imdb_entities = imdb_entities.concat(await request(query_stripped, year, query))
     
             // Query with maximum 20 characters (imdb web ui maximum)
             // if no movies were found
-            if (imdb_entities.filter(r => r.q === 'feature').length == 0) {
+            if (imdb_entities.filter(r => r.type === 'feature').length == 0) {
                 const query_stripped = query.slice(0, 20)
-                imdb_entities = imdb_entities.concat(await request(query_stripped, year))
+                imdb_entities = imdb_entities.concat(await request(query_stripped, year, query))
+            }
+
+            // Longer files can sometimes be prepended with non-title stuff
+            // If we think there are no good candidates at this point and more than 4 words are used,
+            // make a query with the first 2 words removed.
+            if(year && imdb_entities.filter(r => r.year == year).length == 0){
+                if(count_underscores(query) > 3){
+                    const query_2_words_stripped = query.replace(/^[a-z]*_[a-z]*_/, '')
+                    imdb_entities = imdb_entities.concat(await request(query_2_words_stripped, year, query))
+                }
             }
         }
+
+        // Good for debugging why a score is strange. Leave here for now.
+        // if(query_raw.includes('movie_name_2000')){
+        //     console.log(query_raw)
+        //     console.log(imdb_entities.map(i => i.title + ' (' + i.year + ')' + " score: " + score(i)))
+        // }
+
         // If we have imdb_entities at this point, score and pick the best one.
         if (imdb_entities.length > 0) {
             const imdb_entity = imdb_entities
@@ -111,20 +137,22 @@ const make_api = async (cache_path) => {
         // If we exhaust all queries without finding anything,
         // return this stump (useful for debuging)
         return {
-            id: undefined,
-            title: undefined,
-            type: undefined,
-            year: undefined,
-            query: undefined,
+            id: '',
+            title: '',
+            type: '',
+            rank: 10000000,
+            year: 0,
+            query: '',
             source: {
                 year: query_extractor.year(query_raw),
-                query: query_raw
+                query: query_raw,
             }
         }
     }
 
     return {
-        query
+        score,
+        query,
     }
 }
 

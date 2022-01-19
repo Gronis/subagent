@@ -4,12 +4,19 @@ const utils = require('./utils');
 
 const year = (query) => {
     query = ' ' + query.split('_').reverse().join(' ')
-    const regex_year = /[ \.\-\_,][0-9][0-9][0-9][0-9]/;
+    const regex_year = /[ \.\-\_,]?([0-9][0-9][0-9][0-9])/;
     const match = query.match(regex_year)
     if (match) {
-        return match[0].trim()
+        return match[1]
     }
-    return false;
+    return 0;
+}
+
+const ensure_year = (query, year) => {
+    if(!year || !query){
+        return query
+    }
+    return trim_year(query) + '_' + year
 }
 
 const trim_year = query => {
@@ -31,7 +38,7 @@ const from_path = (filepath) => {
     } else {
         results = [from_text(filename)]
     }
-    results = results.filter(n => n) // Remove empty strings
+    results = results.filter(r => r) // Remove empty strings
 
     // If we still have no year at this point, try upper parent and see
     // if that title contains a year. If not, use old result.
@@ -41,23 +48,21 @@ const from_path = (filepath) => {
             results.push(tmp_result)
         }
     }
+
+    const y = results.map(s => year(s))[0]
+    if(y){
+        results = results.map(s => ensure_year(s, y))
+    }
+
     // Sort so that we prioritize titles with years,
     // Otherwise sort for the longest title.
-    return results.sort((s1, s2) => {
-        const year_prio = !!year(s2) - !!year(s1)
-        return year_prio || s2.length - s1.length
-    }).join(',')
-    // return {
-    //     path: path.join(parentpath, filepath),
-    //     query: results.sort((s1, s2) => {
-    //         const year_prio = !!year(s2) - !!year(s1)
-    //         return year_prio || s2.length - s1.length
-    //     })
-    // }
+    const result_sorted = [...new Set(results)]
+        .sort((s1, s2) => s2.length - s1.length)
+    return result_sorted.join(',')
 }
 
 const from_text = (name) => {
-    const whitespace = /[ \.\-\_,:?]/
+    const whitespace = /[ \.\-\_,:?`'·]/
     const regex_hard_end_words = [
         /^720p$/,
         /^1080p$/,
@@ -123,6 +128,7 @@ const from_text = (name) => {
         .filter(y => y > 0)
     const finalEndIndex = Math.min(...endIndices)
     const result = words
+        .map(w => utils.unescape_weird_characters(w))
         .map(w => utils.unescape_leetspeak(w))
         .map(w => utils.unescape_roman_numbers(w))
         .slice(0, finalEndIndex)
@@ -132,27 +138,31 @@ const from_text = (name) => {
 }
 
 // Scores similar queries. Higher score is "more similar"
-const compare = (t1, t2) => {
-    t1 = utils.escape_regex(t1)
-    t2 = utils.escape_regex(t2)
-    t1words = t1.split('_').filter(w => w)
-    t2words = t2.split('_').filter(w => w)
+const compare = (q1, q2) => {
+    q1 = utils.escape_regex(q1)
+    q2 = utils.escape_regex(q2)
+    q1words = [...new Set(q1.split('_').filter(w => w))]
+        .filter(w => w != 'the' || w.length == 1)
+    q2words = [...new Set(q2.split('_').filter(w => w))]
+        .filter(w => w != 'the' || w.length == 1)
     const count_matching_words = (
-        t1words.map(w => w && !!t2.match(w)).reduce((c1, c2) => c1 + c2) +
-        t2words.map(w => w && !!t1.match(w)).reduce((c1, c2) => c1 + c2)
+        q1words.map(w => w && !!q2.match(w)).reduce((c1, c2) => c1 + c2, 0) +
+        q2words.map(w => w && !!q1.match(w)).reduce((c1, c2) => c1 + c2, 0)
     )
     const count_missing_words = (
-        t1words.map(w => w && !t2.match(w)).reduce((c1, c2) => c1 + c2) +
-        t2words.map(w => w && !t1.match(w)).reduce((c1, c2) => c1 + c2)
+        q1words.map(w => w && !q2.match(w)).reduce((c1, c2) => c1 + c2, 0) +
+        q2words.map(w => w && !q1.match(w)).reduce((c1, c2) => c1 + c2, 0)
     )
-    const is_substring = 0 + !!(t1.match(t2) || t2.match(t1))
+    const is_substring = 0 + !!(q1.match(q2) || q2.match(q1))
+    const title_perfect_match = 0 + (trim_year(q1) === trim_year(q2))
     const no_matching_words = (count_matching_words <= 0)
 
-    return is_substring * 10
-        + count_matching_words
+    return (is_substring * 5)
+        + (title_perfect_match * 10) +
+        + (count_matching_words ** 2)
         - count_missing_words
-        - no_matching_words * 10
-        - Math.abs(t1words.length - t2words.length) * 2
+        - (no_matching_words * 10)
+        - (Math.abs(q1words.length - q2words.length) * 2)
 }
 
 module.exports = {

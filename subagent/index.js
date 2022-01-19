@@ -172,13 +172,14 @@ const main = async () => {
         // Only works for movies for now
         const movies_paths_filtered = remove_sample_files(movies_paths_raw)
             .map(p => p.replace(root_path, '')) // Unprepend root path 
-            .slice(0,100)
+            .slice(0,800)
         
         const imdb_entities = (await Promise.all(movies_paths_filtered
-            .map(m => query_extractor.from_path(m))
-            // .map(v => v.query)))
+            .map(m => query_extractor.from_path(m)) //))
             .map(q => imdb_api.query(q))))
-            .map(i => i.id + ": " + i.title + " " + i.year)
+            // .sort((i1, i2) => i1.title > i2.title? 1 : i1.title < i2.title? -1 : 0)
+            .sort((i1, i2) => -imdb_api.score(i1) + imdb_api.score(i2))
+            .map(i => i.id + ": " + i.title + " " + i.year + " q:" + i.source.query )
         console.log(imdb_entities.join('\n'))
     }
     

@@ -23,11 +23,7 @@ const http_request = (url, options) => {
     const req = module.request(options, (res) => {
       let response = {}
       let body = []
-      if((res.headers['content-type'] || '').startsWith('application')){
-        res.setEncoding('binary')
-      } else {
-        res.setEncoding('utf8');
-      }
+      res.setEncoding(options.encoding || 'utf8');
       res.on('data', (chunk) => {
         body.push(chunk);
       });

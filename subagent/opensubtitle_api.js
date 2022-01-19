@@ -88,8 +88,8 @@ const make_api = (cache_path, api_keys) => {
             .data
             .map(entry => entry.attributes.files)
             .filter(files => files && files.length == 1) // Don't use "multi cd subs"
-            .map(files => files[0])
             .flat()
+            .filter(file => file.file_name)
     }
 
     const download = async (file) => {

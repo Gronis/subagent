@@ -115,7 +115,7 @@ const main = async () => {
         const video_parent_path = path.dirname(video_path)
         const subtitle_filename = video_filename + `.subagent-GENERATED.${language}`
         const has_subs = (await fs.readdir(video_parent_path))
-            .filter(p => p.match(subtitle_filename) && p.match(SUBTITLE_EXTENSION_PATTERN)).length > 0
+            .filter(p => p.includes(subtitle_filename) && p.match(SUBTITLE_EXTENSION_PATTERN)).length > 0
         if(has_subs){
             console.log(`"${imdb_entity.title} (${imdb_entity.year})"`, "already has subtitles for language:", language, "skipping..." )
             return;
@@ -130,7 +130,7 @@ const main = async () => {
                 console.log(`Failed to download: "${file.file_name}"`)
                 continue;
             }
-            const subtitle_ext = file.file_name.match(SUBTITLE_EXTENSION_PATTERN)[1]
+            const subtitle_ext = file.file_name.match(SUBTITLE_EXTENSION_PATTERN)[1] || 'srt'
             const subtitle_path = `${video_parent_path}/${subtitle_filename}.${subtitle_ext}`
             const fixed_subtitle = subtitle_ext === 'srt'? fix_srt(subtitle) : subtitle
             await fs.writeFile(subtitle_path, fixed_subtitle, 'utf8')
@@ -260,7 +260,6 @@ const main = async () => {
             languages,
         }
     }
-
     let args = process.argv.slice(1 + process.argv.findIndex(a => a.match('subagent')))
     if(args.length < 2){
         print_help();

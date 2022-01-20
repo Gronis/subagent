@@ -10,10 +10,10 @@ const make_api = async (cache_path) => {
     let request_count = 0;
     let write_task = null;
 
+    const cache_filepath = path.join(cache_path || './', 'imdb_http_cache.json')
     const read_http_cache = async () => {
-        const filepath = path.join(cache_path || './', 'imdb_http_cache.json')
         try {
-            const http_cache = await fs.readFile(filepath, 'utf8');
+            const http_cache = await fs.readFile(cache_filepath, 'utf8');
             if (http_cache) {
                 request_cache = JSON.parse(http_cache)
             }
@@ -24,13 +24,12 @@ const make_api = async (cache_path) => {
     }
     
     const write_http_cache = async () => {
-        request_count = 0;
-        const filepath = path.join(cache_path || './', 'imdb_http_cache.json')
-        await fs.writeFile(filepath, JSON.stringify(request_cache));
+        if(request_count > 0){
+            request_count = 0;
+            await fs.writeFile(cache_filepath, JSON.stringify(request_cache));
+        }
     }
-    // This is just a http request cache to not make imdb ban me while developing
-    const cache_loaded = await read_http_cache();
-    // console.log('Loaded imdb cache: ', cache_loaded)
+    await read_http_cache();
     
     const cached_http_request = async url => {
         if (request_cache[url]) {
@@ -44,7 +43,7 @@ const make_api = async (cache_path) => {
                 write_task = setTimeout(write_http_cache, 1000 * 30)
             }
         }
-        if (request_count > 1){
+        if (request_count > 10){
             await write_http_cache()
         }
         return response

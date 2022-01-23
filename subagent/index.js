@@ -73,7 +73,7 @@ const main = async () => {
     }
     const {cache_path, root_path, languages} = parse_args(args);
     const api_keys = [
-        
+
     ]
     const imdb_api = await make_imdb_api(cache_path)
     const opensubtitle_api = await make_opensubtitle_api(cache_path, api_keys)
@@ -93,7 +93,7 @@ const main = async () => {
             )
             return;
         }
-        const size = (await fs.stat(video_path))?.size || 0
+        const size = (await fs.stat(video_path) || {}).size || 0
         if(size < 128 * 1024){
             console.log(`File ${video_filename} is smaller than 128kb`, "skipping..." )
             return;

@@ -28,11 +28,11 @@ const open = async (filepath) => {
     }
     await read_http_cache();
     
-    const cached_http_request = async url => {
+    const cached_http_request = async (url, options) => {
         if (request_cache[url]) {
             return request_cache[url]
         }
-        const response = await http_request(url)
+        const response = await http_request(url, options)
         if(response.statusCode == 200){
             request_cache[url] = response
             request_count++;

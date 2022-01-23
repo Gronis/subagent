@@ -41,6 +41,9 @@ const http_request = (url, options) => {
         }
       });
     });
+
+    // Debug:
+    // console.log("REQUEST", options)
     
     req.on('error', (e) => {
       reject(`problem with request: ${e.message}`);

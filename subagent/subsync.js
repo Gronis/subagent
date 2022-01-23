@@ -1,7 +1,7 @@
 const proc = require('child_process');
 
 const subsync = (video_filename, subtitle_filename, method = 'subsync') => {
-    return new Promise(accept => {
+    return new Promise((accept, reject) => {
         const methods = {
             'subsync': [
                 // Need loglevel INFO to read status of sync
@@ -37,6 +37,9 @@ const subsync = (video_filename, subtitle_filename, method = 'subsync') => {
                 console.log("Got error", data)
                 result.correlated = false
                 accept(result);
+            }
+            if(data.match('speech recognition model is missing')){
+                reject('Speech recognition model is missing');
             }
             const score = data.match(/score: ([0-9\.]+)/)
             if(score){

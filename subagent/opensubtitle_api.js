@@ -23,20 +23,37 @@ const make_api = (cache_path, api_keys) => {
         return millis_diff > 0;
     }
 
-    const save_subtitle = async (file_id, contents) => {
-        const filepath = path.join(cache_path, ("" + file_id))
-        await fs.writeFile(filepath, contents)
+    const save_subtitle = async (file_id, subtitle) => {
+        const filepath = path.join(cache_path, ("" + file_id + subtitle.extension))
+        await fs.writeFile(filepath, subtitle.contents)
     }
 
     const load_subtitle = async file_id => {
-        const filepath = path.join(cache_path, ("" + file_id))
+        // Extract filename by matching file_id against files in cache.
+        const filename = (await fs.readdir(cache_path))
+            .filter(filename => filename.match("^" + file_id + "\\."))
+            .find(() => true)
+        if(!filename){
+            return {
+                contents: "",
+                extension: "",
+            }
+        }
+        const filepath = path.join(cache_path, filename)
+        const extension = path.extname(filename)
         try {
             const contents = await fs.readFile(filepath, 'utf8');
             if (contents) {
-                return contents;
+                return {
+                    contents,
+                    extension
+                }
             }
         } catch {
-            return '';
+            return {
+                contents: "",
+                extension: "",
+            }
         }
     }
 
@@ -84,22 +101,27 @@ const make_api = (cache_path, api_keys) => {
     }
 
     const query = async (imdb_id, language) => {
+        // Result is a list of files:
+        // {
+        //     file_id: Number,
+        //     file_name: "file.stl",    // Can be null!!
+        // }
         return (await request_subtitles(imdb_id, language))
             .data
             .map(entry => entry.attributes.files)
             .filter(files => files && files.length == 1) // Don't use "multi cd subs"
             .flat()
-            .filter(file => file.file_name)
+            .filter(file => file.file_id) // If for some reason file_id is null or similar.
     }
 
     const download = async (file) => {
         const subtitle = await load_subtitle(file.file_id)
-        if(subtitle){
+        if(subtitle && subtitle.extension && subtitle.contents){
             return subtitle;
         }
         if(blocked()){
             console.log("Api keys are exhaused. Will reset within 24 hours.")
-            return '';
+            return subtitle;
         }
         const response1 = await request_download(file.file_id)
         if(response1.remaining < 0 && !response1.link){
@@ -107,16 +129,18 @@ const make_api = (cache_path, api_keys) => {
             return await download(file)
         }
         if(!response1.link){
-            return '';
+            return subtitle;
         }
         const response2 = await http_request(response1.link)
         if(response2.statusCode == 200){
-            const subtitle = response2.body
+            const filename = response1.file_name || file.file_name
+            subtitle.contents = response2.body
+            subtitle.extension = path.extname(filename) || '.stl' 
             await save_subtitle(file.file_id, subtitle)
             return subtitle
         } else {
             console.log("Error requesting", url, "statusCode:", response2.statusCode)
-            return '';
+            return subtitle
         }
     }
 

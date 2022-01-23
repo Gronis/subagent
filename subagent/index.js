@@ -73,7 +73,7 @@ const main = async () => {
     }
     const {cache_path, root_path, languages} = parse_args(args);
     const api_keys = [
-
+        
     ]
     const imdb_api = await make_imdb_api(cache_path)
     const opensubtitle_api = await make_opensubtitle_api(cache_path, api_keys)
@@ -228,13 +228,15 @@ const main = async () => {
     if(fs.watch){
         const watcher = fs.watch(root_path)
         console.log(`Watching directory: "${root_path}"`)
-        for await (_ of watcher){
-            try{
-                await run_job(root_path, languages)
-            } catch (err){
-                console.log("Error during job", err)
-            } 
-            console.log(`Watching directory: "${root_path}"`)
+        for await (filechange of watcher){
+            if(filechange.filename && filechange.filename.match(VIDEO_EXTENSION_PATTERN)){
+                try{
+                    await run_job(root_path, languages)
+                } catch (err){
+                    console.log("Error during job", err)
+                } 
+                console.log(`Watching directory: "${root_path}"`)
+            }
         }
     } else {
         const hourInterval = 3;

@@ -1,9 +1,13 @@
 
 const fs = require('fs').promises;
 const path = require('path');
+const http_cache = require('./http_cache');
 const http_request = require('./http_request');
 
-const make_api = (cache_path, api_keys) => {
+const make_api = async (cache_path, api_keys) => {
+
+    const cache_filepath = path.join(cache_path || './', 'opensubtitle_http_cache.json')
+    const cached_http_request = await http_cache.open(cache_filepath)
 
     let api_key_index = 0;
     let api_key_resets = Array(api_keys.length)
@@ -67,7 +71,7 @@ const make_api = (cache_path, api_keys) => {
             'Api-Key': api_key(),
             'Content-Type': 'application/json',
         }
-        const response = await http_request(url, { headers })
+        const response = await cached_http_request(url, { headers })
         if(response.statusCode == 200){
             return JSON.parse(response.body)
         } else {

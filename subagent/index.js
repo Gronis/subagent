@@ -83,9 +83,9 @@ const main = async () => {
     const download_and_sync_subtitle = async (imdb_entity, language, video_path) => {
         const subtitles = []
         const video_filename = path.basename(video_path)
-        const video_parent_path = path.dirname(video_path)
+        const parent_path = path.dirname(video_path)
         const subtitle_filename = video_filename + `.subagent-GENERATED.${language}`
-        const has_subs = (await fs.readdir(video_parent_path))
+        const has_subs = (await fs.readdir(parent_path))
             .filter(p => p.includes(subtitle_filename)).length > 0
         if(has_subs){
             console.log(
@@ -100,58 +100,60 @@ const main = async () => {
             return;
         }
         console.log(
-            "Fetching subs for",
-            `"${imdb_entity.title}" (${imdb_entity.year})`,
-            "language:", language
+            "Fetching subs for:\n",
+            `  title: "${imdb_entity.title}" (${imdb_entity.year})\n`,
+            `   file: "${video_filename}"\n`,
+            `   lang: "${language}"`,
         )
         const subtitle_entities = await opensubtitle_api.query(imdb_entity.id, language)
-        console.log("Got", subtitle_entities.length, "subtitle_entities")
+        console.log("Got", subtitle_entities.length, "subtitle(s)")
     
         for(const sub_entity of subtitle_entities.slice(0,5)){
-            console.log(`Downloading: [${sub_entity.file_id}]`)
-            const subtitle1 = await opensubtitle_api.download(sub_entity);
-            if(!subtitle1 || !subtitle1.contents || !subtitle1.extension){
+            console.log(`Downloading: [id:${sub_entity.file_id}]`)
+            const subtitle_metadata = await opensubtitle_api.download(sub_entity);
+            if(!subtitle_metadata || !subtitle_metadata.contents || !subtitle_metadata.extension){
                 console.log(`Failed to download: "${sub_entity.file_id}"`)
                 continue;
             }
-            const subtitle_cache_filename = sub_entity.file_id + subtitle1.extension
-            console.log(`Downloaded "${subtitle_cache_filename}" successfully`)
-            const subtitle_path = `${video_parent_path}/${subtitle_filename}${subtitle1.extension}`
-            const subtitle_contents = subtitle1.extension === '.srt'
-                ? srt.fix(subtitle1.contents) 
-                : subtitle1.contents
-            await fs.writeFile(subtitle_path, subtitle_contents, 'utf8')
-            console.log(`Syncing "${subtitle_cache_filename}"`)
-            const subtitle2 = await subsync(video_path, subtitle_path).catch(err => {
+            const sub_in_path = path.join(cache_path, `subtitle${subtitle_metadata.extension}`)
+            const sub_out_path = path.join(cache_path, `synced_subtitle${subtitle_metadata.extension}`)
+            console.log(`Downloaded "${sub_in_path}" successfully`)
+            const subtitle_contents = subtitle_metadata.extension === '.srt'
+                ? srt.fix(subtitle_metadata.contents) 
+                : subtitle_metadata.contents
+            await fs.writeFile(sub_in_path, subtitle_contents, 'utf8')
+            console.log(`Syncing "${sub_in_path}"`)
+            const sync_result = await subsync(video_path, sub_in_path, sub_out_path).catch(err => {
                 console.log('Media cannot be synced with subtitles.', err)
             })
-            if(!subtitle2 || !subtitle2.correlated){
-                // If subtitle is not correlated. Remove file to indicate that there
-                // is no good subtitle yet for this video
-                await fs.unlink(subtitle_path)
-                if(subtitle2){
-                    console.log("Subtitle sync failed. Trying next sub")
-                    console.log(subtitle2)
-                    continue;
-                } else {
-                    // If no subtitle were returned, this means error with media
-                    // not just this subtitle file. Skip this media file entirely.
-                    console.log("Subtitle sync failed. Skipping", `"${video_path}"`)
-                    return;
-                }
+            if(!sync_result){
+                // If no sub metadata were returned, this means error with media
+                // not just this subtitle file. Skip this media file entirely.
+                console.log(
+                    "Subtitle sync failed. Skipping", 
+                    `"${imdb_entity.title}" (${imdb_entity.year})`
+                )
+                return;
+            }
+            if(!sync_result.correlated){
+                console.log("Subtitle sync failed. Trying next sub")
+                console.log(sync_result)
+                continue;
             }
             console.log('Sync OK!')
-            console.log(subtitle2)
-            subtitle2.contents = await fs.readFile(subtitle_path, 'utf8')
-            subtitle2.score = (subtitle2.points || 0)/Math.sqrt(subtitle2.maxChange || 10000)
-            subtitle2.file_id = sub_entity.file_id
-            subtitle2.imdb_id = imdb_entity.id
-            subtitle2.title = imdb_entity.title
-            subtitle2.year = imdb_entity.year
-            subtitles.push(subtitle2)
+            console.log(sync_result)
+            subtitles.push({
+                contents: await fs.readFile(sub_out_path, 'utf8'),
+                path: path.join(parent_path, `${subtitle_filename}${subtitle_metadata.extension}`),
+                metadata: {
+                    file_id: sub_entity.file_id,
+                    imdb_entity,
+                    sync_result,
+                }
+            })
             // If maximum change is less than 1 sec, the subtitle was probably a good fit from
             // the start and we should use it.
-            if(subtitle2.maxChange < 1.0){
+            if(sync_result.maxChange < 1.0){
                 break;
             } else {
                 console.log("Fit might not be so good, so will try and compare more subtitles...")
@@ -165,8 +167,7 @@ const main = async () => {
         if(subtitle){
             console.log(`Done, writing subtitle to "${subtitle.path}"`)
             await fs.writeFile(subtitle.path, subtitle.contents, 'utf8')
-            const { ['contents']:_, ...subtitle_metadata } = subtitle
-            await subtitle_metadata_database.store(subtitle.path, subtitle_metadata)
+            await subtitle_metadata_database.store(subtitle.path, subtitle.metadata)
         }
     }
 

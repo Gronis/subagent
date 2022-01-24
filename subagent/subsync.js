@@ -1,25 +1,17 @@
 const proc = require('child_process');
 
-const subsync = (video_filename, subtitle_filename, method = 'subsync') => {
-    return new Promise((accept, reject) => {
-        const methods = {
-            'subsync': [
-                // Need loglevel INFO to read status of sync
-                '-c', '--overwrite', '--loglevel=INFO', 
-                'sync' ,
-                '--ref', video_filename, 
-                '--sub', subtitle_filename, 
-                '--out', subtitle_filename
-            ],
-            // These will probably not be used (Gives bad results)
-            'ffsubsync': [video_filename, '-i', subtitle_filename, '-o', subtitle_filename],
-            'alass': [video_filename, subtitle_filename, subtitle_filename, '--no-split'],
-            'autosubsync': [video_filename, subtitle_filename, subtitle_filename],
-        }
-        const sync_subtitle = proc.spawn(method, methods[method]);
-        let result = {
-            path: subtitle_filename,
-        }
+const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filename) => {
+    const result = await new Promise((accept, reject) => {
+        const args = [
+            // Need loglevel INFO to read status of sync
+            '-c', '--overwrite', '--loglevel=INFO', 
+            'sync' ,
+            '--ref', video_filename, 
+            '--sub', subtitle_in_filename, 
+            '--out', subtitle_out_filename
+        ]
+        const sync_subtitle = proc.spawn('subsync', args);
+        let result = {}
         sync_subtitle.on('exit', (code) => {
             if(code == 0){
                 accept(result);
@@ -62,6 +54,8 @@ const subsync = (video_filename, subtitle_filename, method = 'subsync') => {
         sync_subtitle.stderr.on('data', on_data)
         sync_subtitle.stdout.on('data', on_data)
     })
+    result.score = (result.points || 0)/Math.sqrt(result.maxChange || 10000)
+    return result
 }
 
 module.exports = subsync

@@ -58,7 +58,7 @@ const make_api = async (cache_path, api_keys) => {
             if (contents) {
                 return {
                     contents,
-                    extension
+                    extension,
                 }
             }
         } catch {

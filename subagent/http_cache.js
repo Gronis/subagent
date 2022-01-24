@@ -27,11 +27,25 @@ const open = async (filepath) => {
         }
     }
     await read_http_cache();
+
+    const millis_since = date => {
+        return new Date() - new Date(date)
+    }
     
     const cached_http_request = async (url, options) => {
-        if (request_cache[url]) {
-            return request_cache[url]
+        // Use 1 week cache.
+        const cached_request = request_cache[url]
+        if (cached_request) {
+            const cache_is_at_least_1_week_old = (
+                cached_request.headers && 
+                cached_request.headers.date && 
+                millis_since(cached_request.headers.date) > 1000 * 3600 * 24 * 7
+            )
+            if(!cache_is_at_least_1_week_old){
+                return request_cache[url]
+            }
         }
+        // We have no cache, or it is older than 1 week.
         const response = await http_request(url, options)
         if(response.statusCode == 200){
             request_cache[url] = response

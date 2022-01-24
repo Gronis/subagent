@@ -57,4 +57,4 @@ volumes:
 Start by typing `docker-compose up -d` in a terminal.
 
 ## Attention!
-Use SubAgent at your own risk. There is no 100% guarantee that your library won't be ruined when running this SubAgent. Make sure to keep all data you care about backed-up. Be sure to follow the 3-2-1 rule for backups.
+Use SubAgent at your own risk. There is no 100% guarantee that your library won't be ruined when running SubAgent. Make sure to keep all data you care about backed-up. Be sure to follow the 3-2-1 rule for backups.

@@ -12,8 +12,16 @@ const make_api = async (cache_path, api_keys) => {
     let api_key_index = 0;
     let api_key_resets = Array(api_keys.length)
 
-    const api_key = () => {
+    const get_api_key = () => {
         return api_keys[api_key_index]
+    }
+
+    const get_headers = () => {
+        return {
+            'Api-Key': get_api_key(),
+            'Content-Type': 'application/json',
+            'User-Agent': 'SubAgent/0.0',
+        }
     }
 
     const rotate_api_key = (reset_time_utc) => {
@@ -67,10 +75,7 @@ const make_api = async (cache_path, api_keys) => {
         }
         const id = parseInt(imdb_id.replace(/tt0*/, ''))
         const url = `https://api.opensubtitles.com/api/v1/subtitles?imdb_id=${id}&languages=${language}`
-        const headers = {
-            'Api-Key': api_key(),
-            'Content-Type': 'application/json',
-        }
+        const headers = get_headers();
         const response = await cached_http_request(url, { headers })
         if(response.statusCode == 200){
             return JSON.parse(response.body)
@@ -84,11 +89,8 @@ const make_api = async (cache_path, api_keys) => {
             return {}
         }
         const url = 'https://api.opensubtitles.com/api/v1/download'
-        const headers = {
-            'Api-Key': api_key(),
-            'Content-Type': 'application/json',
-        }
         const method = 'POST'
+        const headers = get_headers();
         const body = JSON.stringify({ file_id })
         const response = await http_request(url, { headers, body, method })
         // Status 406 is returned when keys are exhausted.

@@ -21,7 +21,7 @@ The subtitle files are stored next to the movie file with added suffix:
 * The number of subtitle downloads per day is restriced for [opensubtitles](https://opensubtitles.com). If the maximum limit for 1 day is reached, subagent will wait until the restriction has been lifted.
 
 ## Current caveats:
-- Movie matching can sometimes we wrong. There is no way of manually fixing those matches except by renaming the file. 
+- Movie matching can sometimes be wrong. There is no way of manually fixing those matches except by renaming the file. 
 - The whole process is pretty slow, but subtitle match is promising.
 - Only supports movies for now (not TV series/anime)
 - Only published as a docker image. Don't ask for a supported native version or other platforms like Windows. This is just too much work and not worth the effort. Just use docker lol.
@@ -47,7 +47,7 @@ services:
   subagent:
     image: gronis/subagent
     restart: unless-stopped
-    command: ["--cache", "/cache", "/movies", "en", "sv"]
+    command: ["--cache", "/cache", "/movies", "en", "de", "es"]
     volumes:
       - /path/to/movies:/movies
       - cache:/cache

@@ -1,11 +1,11 @@
 const path = require('path')
 const fs = require('fs').promises
 
-const open = async (cache_path) => {
+const open = async (cache_path, database_name) => {
     let table = {};
     let write_count = 0;
 
-    const database_path = path.join(cache_path || './', 'database.json')
+    const database_path = path.join(cache_path || './', database_name || 'database.json')
 
     const read_database = async () => {
         try {

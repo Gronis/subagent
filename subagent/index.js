@@ -77,7 +77,8 @@ const main = async () => {
     ]
     const imdb_api = await make_imdb_api(cache_path)
     const opensubtitle_api = await make_opensubtitle_api(cache_path, api_keys)
-    const db = await database.open(cache_path)
+    const subtitle_metadata_database = await database.open(cache_path, 'subtitle_metadata_database.json')
+    const imdb_metadata_database = await database.open(cache_path, 'imdb_metadata_database.json')
 
     const download_and_sync_subtitle = async (imdb_entity, language, video_path) => {
         const subtitles = []
@@ -95,7 +96,7 @@ const main = async () => {
         }
         const size = (await fs.stat(video_path) || {}).size || 0
         if(size < 128 * 1024){
-            console.log(`File ${video_filename} is smaller than 128kb`, "skipping..." )
+            console.log(`"${video_filename}" is smaller than 128kb`, "skipping..." )
             return;
         }
         console.log(
@@ -164,8 +165,8 @@ const main = async () => {
         if(subtitle){
             console.log(`Done, writing subtitle to "${subtitle.path}"`)
             await fs.writeFile(subtitle.path, subtitle.contents, 'utf8')
-            const { ['contents']:_, ...subtitle_without_contents } = subtitle
-            await db.store(subtitle.path, subtitle_without_contents)
+            const { ['contents']:_, ...subtitle_metadata } = subtitle
+            await subtitle_metadata_database.store(subtitle.path, subtitle_metadata)
         }
     }
 
@@ -188,27 +189,26 @@ const main = async () => {
     const run_job = async (root_path, languages) => {
         console.log("Running subagent job...")
         // Only works for movies for now
-        const movies_paths = remove_sample_files(await list_video_files(root_path)) 
-        
-        console.log("Matching movies:", movies_paths)
-        const video_paths_and_query_list = movies_paths.map(video_path => ({ 
-            video_path, 
-            query: query_extractor.from_path(video_path.replace(root_path, '')) 
-            // Leaving root path before extracting query might give odd matches, so remove it.
-        }))
+        const video_paths = remove_sample_files(await list_video_files(root_path))         
+        console.log("Matching movies:", video_paths)
         
         //Download subs
-        for(const { video_path, query } of video_paths_and_query_list){
-            console.log("Searching for:", query)
-            imdb_entity = await imdb_api.query(query)
-            if(!imdb_entity.id){
-                console.log("Cannot match", imdb_entity.l, "skipping...")
-                continue;
+        for(const video_path of video_paths){
+            let imdb_entity = await imdb_metadata_database.load(video_path)
+            if(!imdb_entity){
+                const query = query_extractor.from_path(video_path.replace(root_path, ''))
+                console.log("Searching for:", query)
+                imdb_entity = await imdb_api.query(query)
+                if(!imdb_entity.id){
+                    console.log("Cannot match", imdb_entity.l, "skipping...")
+                    continue;
+                }
+                console.log(
+                    `Found [${imdb_entity.id}] "${imdb_entity.title}"`,
+                    (imdb_entity.year? `(${imdb_entity.year})` : '')
+                )
+                await imdb_metadata_database.store(video_path, imdb_entity)
             }
-            console.log(
-                `Found [${imdb_entity.id}] "${imdb_entity.title}"`,
-                (imdb_entity.year? `(${imdb_entity.year})` : '')
-            )
             for (let language of languages){
                 await download_and_sync_subtitle(imdb_entity, language, video_path);
                 if(opensubtitle_api.blocked()){

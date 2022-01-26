@@ -112,6 +112,9 @@ const make_api = async (cache_path, api_keys) => {
         //     file_id: Number,
         //     file_name: "file.stl",    // Can be null!!
         // }
+
+        // TODO: Add support for multi-cd subtitle.
+        // We can sync a multi cd release in several passes and then join the subtitle afterwards.
         return (await request_subtitles(imdb_id, language))
             .data
             .map(entry => entry.attributes.files)

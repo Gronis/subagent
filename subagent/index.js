@@ -159,10 +159,13 @@ const main = async () => {
                 console.log("Fit might not be so good, so will try and compare more subtitles...")
             }
         }
+        // TODO: If no subtitle is good, see if we can match with other subtitles in other languages
+        // That we already have a good sync with.
+
         // Take the best subtitle 
         // (The one with the most number of synced points, scaled by max change)
         const subtitle = subtitles
-            .sort((s1, s2) => s2.score - s1.score)
+            .sort((s1, s2) => s2.metadata.sync_result.score - s1.metadata.sync_result.score)
             .find(() => true)
         if(subtitle){
             console.log(`Done, writing subtitle to "${subtitle.path}"`)

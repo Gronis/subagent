@@ -55,6 +55,10 @@ const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filena
         sync_subtitle.stdout.on('data', on_data)
     })
     result.score = (result.points || 0)/Math.sqrt(result.maxChange || 10000)
+    // From testing, scores under 2.5 seam to be out of sync.
+    if(result.score < 2.5){
+        result.correlated = false
+    }
     return result
 }
 

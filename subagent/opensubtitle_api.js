@@ -49,6 +49,7 @@ const make_api = async (cache_path, api_keys) => {
             return {
                 contents: "",
                 extension: "",
+                file_id,
             }
         }
         const filepath = path.join(cache_path, filename)
@@ -59,12 +60,14 @@ const make_api = async (cache_path, api_keys) => {
                 return {
                     contents,
                     extension,
+                    file_id,
                 }
             }
         } catch {
             return {
                 contents: "",
                 extension: "",
+                file_id,
             }
         }
     }

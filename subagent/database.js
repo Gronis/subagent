@@ -27,17 +27,17 @@ const open = async (cache_path, database_name) => {
     }
     await read_database();
     
-    const load = async key => {
+    const load = key => {
         if (table[key]) {
             return table[key]
         }
         return null
     }
-    const store = async (key, value) => {
+    const store = (key, value) => {
         table[key] = value
         write_count++;
         if (write_count > 0){
-            await write_database()
+            write_database()
         }
     }
 

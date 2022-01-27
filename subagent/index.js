@@ -79,6 +79,85 @@ const main = async () => {
     const opensubtitle_api = await make_opensubtitle_api(cache_path, api_keys)
     const subtitle_metadata_database = await database.open(cache_path, 'subtitle_metadata_database.json')
     const imdb_metadata_database = await database.open(cache_path, 'imdb_metadata_database.json')
+    const subsync_failure_database = await database.open(cache_path, 'subsync_failure_database.json')
+
+    // Get previously synced subtitle in any other language. Sorted by score.
+    const get_synced_subtitle_path = async video_path => {
+        const parent_path = path.dirname(video_path)
+        const subtitle_filename = path.basename(video_path) + ".subagent-GENERATED"
+        const synced_sub_filenames = (await fs.readdir(parent_path))
+            .filter(p => p.includes(subtitle_filename))
+        return synced_sub_filenames
+            .map(s_file => path.join(parent_path, s_file))
+            .map(s_path => ({ 
+                path: s_path, 
+                metadata: subtitle_metadata_database.load(s_path)
+            }))
+            .filter(s => s)
+            .sort((s1, s2) => s2.metadata.sync_result.score - s1.metadata.sync_result.score)
+            .map(s => s.path)
+            .find(() => true)
+    }
+
+    const download_subtitle = async subtitle_file => {
+        console.log(`Downloading: [id:${subtitle_file.file_id}]`)
+        const subtitle_data = await opensubtitle_api.download(subtitle_file);
+        if(!subtitle_data || !subtitle_data.contents || !subtitle_data.extension){
+            console.log(`Failed to download: "${subtitle_file.file_id}"`)
+            return null;
+        }
+        console.log(`Downloaded [id:${subtitle_file.file_id}] successfully`)
+        return subtitle_data
+    }
+
+    const sync_subtitle = async (subtitle_data, reference_path) => {
+        const subsync_failure_key = `${reference_path}:${subtitle_data.file_id}`
+        {   // Use cached result so we dont sync failed subtitles over and over.
+            const sync_result = subsync_failure_database.load(subsync_failure_key)
+            if(sync_result){
+                console.log("Subtitle sync has failed before. Won't sync again. Previous result:")
+                console.log(sync_result)
+                return {
+                    sync_result,
+                    synced_subtitle_data: null,
+                }
+            }
+        }
+        const sub_in_path = path.join(cache_path, `subtitle${subtitle_data.extension}`)
+        const sub_out_path = path.join(cache_path, `synced_subtitle${subtitle_data.extension}`)
+        const subtitle_contents = subtitle_data.extension === '.srt'
+            ? srt.fix(subtitle_data.contents) 
+            : subtitle_data.contents
+        await fs.writeFile(sub_in_path, subtitle_contents, 'utf8')
+        console.log(`Syncing [id:${subtitle_data.file_id}] using reference "${reference_path}"`)
+        const sync_result = await subsync(reference_path, sub_in_path, sub_out_path).catch(err => {
+            console.log('Media cannot be synced with subtitles.', err)
+        })
+        if(!sync_result){
+            console.log(`Subtitle sync failed. Skipping "${reference_path}"`)
+            return {
+                sync_result: null,
+                synced_subtitle_data: null,
+            }
+        }
+        if(!sync_result.correlated){
+            subsync_failure_database.store(subsync_failure_key, sync_result)
+            console.log("Subtitle sync failed. Result:")
+            console.log(sync_result)
+            console.log("Trying next subtitle...")
+            return {
+                sync_result,
+                synced_subtitle_data: null,
+            }
+        }
+        return {
+            sync_result,
+            synced_subtitle_data: {
+                ...subtitle_data,
+                contents: await fs.readFile(sub_out_path, 'utf8'),
+            }
+        }
+    }
 
     const download_and_sync_subtitle = async (imdb_entity, language, video_path) => {
         const subtitles = []
@@ -87,16 +166,14 @@ const main = async () => {
         const subtitle_filename = video_filename + `.subagent-GENERATED.${language}`
         const has_subs = (await fs.readdir(parent_path))
             .filter(p => p.includes(subtitle_filename)).length > 0
+
         if(has_subs){
-            console.log(
-                `"${imdb_entity.title} (${imdb_entity.year})"`, 
-                "already has subtitles for language:", language, "skipping..."
-            )
+            console.log(`"${video_filename}" has subtitles for language "${language}", skipping...`)
             return;
         }
         const size = (await fs.stat(video_path) || {}).size || 0
         if(size < 128 * 1024){
-            console.log(`"${video_filename}" is smaller than 128kb`, "skipping..." )
+            console.log(`"${video_filename}" is smaller than 128kb, skipping...`)
             return;
         }
         console.log(
@@ -105,51 +182,23 @@ const main = async () => {
             `   file: "${video_filename}"\n`,
             `   lang: "${language}"`,
         )
-        const subtitle_entities = await opensubtitle_api.query(imdb_entity.id, language)
-        console.log("Got", subtitle_entities.length, "subtitle(s)")
-    
-        for(const sub_entity of subtitle_entities.slice(0,5)){
-            console.log(`Downloading: [id:${sub_entity.file_id}]`)
-            const subtitle_metadata = await opensubtitle_api.download(sub_entity);
-            if(!subtitle_metadata || !subtitle_metadata.contents || !subtitle_metadata.extension){
-                console.log(`Failed to download: "${sub_entity.file_id}"`)
-                continue;
-            }
-            const sub_in_path = path.join(cache_path, `subtitle${subtitle_metadata.extension}`)
-            const sub_out_path = path.join(cache_path, `synced_subtitle${subtitle_metadata.extension}`)
-            console.log(`Downloaded "${sub_in_path}" successfully`)
-            const subtitle_contents = subtitle_metadata.extension === '.srt'
-                ? srt.fix(subtitle_metadata.contents) 
-                : subtitle_metadata.contents
-            await fs.writeFile(sub_in_path, subtitle_contents, 'utf8')
-            console.log(`Syncing "${sub_in_path}"`)
-            const sync_result = await subsync(video_path, sub_in_path, sub_out_path).catch(err => {
-                console.log('Media cannot be synced with subtitles.', err)
-            })
-            if(!sync_result){
-                // If no sub metadata were returned, this means error with media
-                // not just this subtitle file. Skip this media file entirely.
-                console.log(
-                    "Subtitle sync failed. Skipping", 
-                    `"${imdb_entity.title}" (${imdb_entity.year})`
-                )
-                return;
-            }
-            if(!sync_result.correlated){
-                console.log("Subtitle sync failed. Trying next sub")
-                console.log(sync_result)
-                continue;
-            }
-            console.log('Sync OK!')
-            console.log(sync_result)
+        const subtitle_files = await opensubtitle_api.query(imdb_entity.id, language)
+        console.log("Got", subtitle_files.length, "subtitle(s)")
+        for(const subtitle_file of subtitle_files.slice(0,5)){
+            const subtitle_data = await download_subtitle(subtitle_file)
+            if(!subtitle_data) continue;
+            const { synced_subtitle_data, sync_result } = await sync_subtitle(subtitle_data, video_path)
+            if(!sync_result) return;
+            if(!sync_result.correlated || !synced_subtitle_data) continue;
+            console.log('Sync OK!', sync_result)
             subtitles.push({
-                contents: await fs.readFile(sub_out_path, 'utf8'),
-                path: path.join(parent_path, `${subtitle_filename}${subtitle_metadata.extension}`),
+                ...synced_subtitle_data,
                 metadata: {
-                    file_id: sub_entity.file_id,
                     imdb_entity,
+                    file_id: subtitle_file.file_id,
+                    sync_reference: video_path,
                     sync_result,
-                }
+                },
             })
             // If maximum change is less than 1 sec, the subtitle was probably a good fit from
             // the start and we should use it.
@@ -159,8 +208,31 @@ const main = async () => {
                 console.log("Fit might not be so good, so will try and compare more subtitles...")
             }
         }
-        // TODO: If no subtitle is good, see if we can match with other subtitles in other languages
-        // That we already have a good sync with.
+        // If no subtitle is good, see if we can match with other subtitles in other languages
+        if(subtitles.length == 0){
+            const synced_subtitle_path = await get_synced_subtitle_path(video_path)
+            if(!synced_subtitle_path){
+                console.log(`No suitable subtitle found for "${video_path}"`)
+                return;
+            }
+            for(const subtitle_file of subtitle_files.slice(0,5)){
+                const subtitle_data = await download_subtitle(subtitle_file)
+                if(!subtitle_data) continue;
+                const { synced_subtitle_data, sync_result } = await sync_subtitle(subtitle_data, synced_subtitle_path)
+                if(!sync_result) return;
+                if(!sync_result.correlated || !synced_subtitle_data) continue;
+                console.log('Sync OK!', sync_result)
+                subtitles.push({
+                    ...synced_subtitle_data,
+                    metadata: {
+                        imdb_entity,
+                        file_id: subtitle_file.file_id,
+                        sync_reference: synced_subtitle_path,
+                        sync_result,
+                    },
+                })
+            }
+        }
 
         // Take the best subtitle 
         // (The one with the most number of synced points, scaled by max change)
@@ -168,9 +240,10 @@ const main = async () => {
             .sort((s1, s2) => s2.metadata.sync_result.score - s1.metadata.sync_result.score)
             .find(() => true)
         if(subtitle){
-            console.log(`Done, writing subtitle to "${subtitle.path}"`)
-            await fs.writeFile(subtitle.path, subtitle.contents, 'utf8')
-            await subtitle_metadata_database.store(subtitle.path, subtitle.metadata)
+            const subtitle_path = path.join(parent_path, `${subtitle_filename}${subtitle.extension}`)
+            console.log(`Saving subtitle to "${subtitle_path}"`)
+            await fs.writeFile(subtitle_path, subtitle.contents, 'utf8')
+            subtitle_metadata_database.store(subtitle_path, subtitle.metadata)
         }
     }
 
@@ -198,7 +271,7 @@ const main = async () => {
         
         //Download subs
         for(const video_path of video_paths){
-            let imdb_entity = await imdb_metadata_database.load(video_path)
+            let imdb_entity = imdb_metadata_database.load(video_path)
             if(!imdb_entity){
                 const query = query_extractor.from_path(video_path.replace(root_path, ''))
                 console.log("Searching for:", query)
@@ -211,7 +284,7 @@ const main = async () => {
                     `Found [${imdb_entity.id}] "${imdb_entity.title}"`,
                     (imdb_entity.year? `(${imdb_entity.year})` : '')
                 )
-                await imdb_metadata_database.store(video_path, imdb_entity)
+                imdb_metadata_database.store(video_path, imdb_entity)
             }
             for (let language of languages){
                 await download_and_sync_subtitle(imdb_entity, language, video_path);
@@ -229,6 +302,7 @@ const main = async () => {
     // await run_imdb_matching_only(root_path)
     await run_job(root_path, languages)
     
+    // TODO: use normal watch (not promise watch, because of better nodejs compatibility)
     if(fs.watch){
         const watcher = fs.watch(root_path)
         console.log(`Watching directory: "${root_path}"`)

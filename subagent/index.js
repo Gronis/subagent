@@ -245,7 +245,7 @@ const main = async () => {
     } else {
         const hourInterval = 3;
         console.log(`Scheduled for scanning every ${hourInterval} hours.`)
-        setInterval(async () => {
+        const scan = async () => {
             console.log("Starting scheduled scan...")
             try{
                 await run_job(root_path, languages)
@@ -253,7 +253,9 @@ const main = async () => {
                 console.log("Error during job", err)
             } 
             console.log(`Sleeping for ${hourInterval} hours.`)
-        }, 1000* 3600 * hourInterval)
+            setTimeout(scan, 1000* 3600 * hourInterval)
+        }
+        setTimeout(scan, 1000* 3600 * hourInterval)
     }
 
 }

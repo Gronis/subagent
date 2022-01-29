@@ -275,7 +275,7 @@ const main = async () => {
         // Only works for movies for now
         const video_paths = remove_sample_files(await list_video_files(root_path))         
         console.log("Matching movies:", video_paths)
-
+        
         //Download subs
         for(const video_path of video_paths){
             let imdb_entity = imdb_metadata_database.load(video_path)
@@ -333,7 +333,7 @@ const main = async () => {
     }
     // If watcher is supported, scan when video-files changes on filesystem.
     if(watch){
-        const watcher = watch(root_path)
+        const watcher = watch(root_path, { recursive: true })
         console.log(`Watching directory: "${root_path}"`)
         for await (filechange of watcher){
             if(filechange.filename && filechange.filename.match(VIDEO_EXTENSION_PATTERN)){

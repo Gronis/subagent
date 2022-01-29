@@ -265,8 +265,9 @@ const main = async () => {
             .map(i => i.id + ": " + i.title + " " + i.year + " q:" + i.source.query )
         console.log(imdb_entities.join('\n'))
     }
-    const run_job = async (root_path, languages) => {
-        console.log("Running subagent job...")
+
+    const run_scan = async (root_path, languages) => {
+        console.log("Running subagent scan job...")
         // Only works for movies for now
         const video_paths = remove_sample_files(await list_video_files(root_path))         
         console.log("Matching movies:", video_paths)
@@ -298,47 +299,44 @@ const main = async () => {
                 }
             }
         }
-        console.log("Finished subagent job...")
+        console.log("Finished subagent scan job...")
     }
 
     // await run_imdb_matching_only(root_path)
-    await run_job(root_path, languages)
+    await run_scan(root_path, languages)
     
-    // TODO: use normal watch (not promise watch, because of better nodejs compatibility)
+    let timestamp_last_job = new Date(0)
+    let active_job = false;
+    // Only one scheduled scan can run at a time, and not too soon (< 5s) after one another.
+    const run_scheduled_scan = async () => {
+        const timestamp_now = new Date()
+        const millis_since_last_job = timestamp_now - timestamp_last_job
+        if(active_job || millis_since_last_job < 5000) return;
+        timestamp_last_job = timestamp_now;
+        active_job = true;
+        try{
+            await run_scan(root_path, languages)
+        } catch (err){
+            console.log("Error during job", err)
+        } finally{
+            active_job = false
+        }
+    }
+    { // Start scheduled runner. Scan more often if watch is unsupported.
+        const hourInterval = watch? 12 : 3;
+        console.log(`Scheduled for scanning every ${hourInterval} hours.`)
+        setInterval(run_scheduled_scan, 1000 * 3600 * hourInterval)
+    }
+    // If watcher is supported, scan when video-files changes on filesystem.
     if(watch){
         const watcher = watch(root_path)
-        let timestamp_last_job = new Date(0)
         console.log(`Watching directory: "${root_path}"`)
         for await (filechange of watcher){
             if(filechange.filename && filechange.filename.match(VIDEO_EXTENSION_PATTERN)){
-                const timestamp_now = new Date()
-                const millis_since_last_job = timestamp_now - timestamp_last_job
-                if(millis_since_last_job < 5000) continue;
-                timestamp_last_job = timestamp_now;
-                try{
-                    await run_job(root_path, languages)
-                } catch (err){
-                    console.log("Error during job", err)
-                } 
-                console.log(`Watching directory: "${root_path}"`)
+                await run_scheduled_scan()
             }
         }
-    } else {
-        const hourInterval = 3;
-        console.log(`Scheduled for scanning every ${hourInterval} hours.`)
-        const scan = async () => {
-            console.log("Starting scheduled scan...")
-            try{
-                await run_job(root_path, languages)
-            } catch (err){
-                console.log("Error during job", err)
-            } 
-            console.log(`Sleeping for ${hourInterval} hours.`)
-            setTimeout(scan, 1000* 3600 * hourInterval)
-        }
-        setTimeout(scan, 1000* 3600 * hourInterval)
-    }
-
+    } 
 }
 
 main();

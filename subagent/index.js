@@ -81,8 +81,8 @@ const main = async () => {
     const imdb_metadata_database = await database.open(cache_path, 'imdb_metadata_database.json')
     const subsync_failure_database = await database.open(cache_path, 'subsync_failure_database.json')
 
-    // Get previously synced subtitle in any other language. Sorted by score.
-    const get_synced_subtitle_path = async video_path => {
+    // Get previously synced subtitle in any other language. Sorted by score, min score: 100
+    const get_synced_subtitle_path = async (video_path, minimum_score) => {
         const parent_path = path.dirname(video_path)
         const subtitle_filename = path.basename(video_path) + ".subagent-GENERATED"
         const synced_sub_filenames = (await fs.readdir(parent_path))
@@ -93,7 +93,7 @@ const main = async () => {
                 path: s_path, 
                 metadata: subtitle_metadata_database.load(s_path)
             }))
-            .filter(s => s)
+            .filter(s => s && s.metadata.sync_result.score > (minimum_score || 0))
             .sort((s1, s2) => s2.metadata.sync_result.score - s1.metadata.sync_result.score)
             .map(s => s.path)
             .find(() => true)
@@ -208,43 +208,44 @@ const main = async () => {
                 console.log("Fit might not be so good, so will try and compare more subtitles...")
             }
         }
-        // If no subtitle is good, see if we can match with other subtitles in other languages
-        if(subtitles.length == 0){
-            const synced_subtitle_path = await get_synced_subtitle_path(video_path)
-            if(!synced_subtitle_path){
-                console.log(`No suitable subtitle found for "${video_path}"`)
-                return;
-            }
-            for(const subtitle_file of subtitle_files.slice(0,5)){
-                const subtitle_data = await download_subtitle(subtitle_file)
-                if(!subtitle_data) continue;
-                const { synced_subtitle_data, sync_result } = await sync_subtitle(subtitle_data, synced_subtitle_path)
-                if(!sync_result) return;
-                if(!sync_result.correlated || !synced_subtitle_data) continue;
-                console.log('Sync OK!', sync_result)
-                subtitles.push({
-                    ...synced_subtitle_data,
-                    metadata: {
-                        imdb_entity,
-                        file_id: subtitle_file.file_id,
-                        sync_reference: synced_subtitle_path,
-                        sync_result,
-                    },
-                })
-            }
+        // Before we choose, see if we can match with other subtitles in other languages
+        const synced_subtitle_path = await get_synced_subtitle_path(video_path, 100)
+        if(subtitles.length == 0 && !synced_subtitle_path){
+            console.log(`No suitable subtitle found for "${video_path}" for language "${language}"`)
+            return;
+        }
+        console.log(`Resyncing subs using "${synced_subtitle_path}" as reference.`)
+        for(const subtitle_file of (subtitles.length > 0? subtitles : subtitle_files.slice(0,5))){
+            const subtitle_data = await download_subtitle(subtitle_file)
+            if(!subtitle_data) continue;
+            const { synced_subtitle_data, sync_result } = await sync_subtitle(subtitle_data, synced_subtitle_path)
+            if(!sync_result) return;
+            if(!sync_result.correlated || !synced_subtitle_data) continue;
+            console.log('Sync OK!', sync_result)
+            subtitles.push({
+                ...synced_subtitle_data,
+                metadata: {
+                    imdb_entity,
+                    file_id: subtitle_file.file_id,
+                    sync_reference: synced_subtitle_path,
+                    sync_result,
+                },
+            })
         }
 
-        // Take the best subtitle 
+        // Take the subtitle with the best score.
         // (The one with the most number of synced points, scaled by max change)
         const subtitle = subtitles
             .sort((s1, s2) => s2.metadata.sync_result.score - s1.metadata.sync_result.score)
             .find(() => true)
-        if(subtitle){
-            const subtitle_path = path.join(parent_path, `${subtitle_filename}${subtitle.extension}`)
-            console.log(`Saving subtitle to "${subtitle_path}"`)
-            await fs.writeFile(subtitle_path, subtitle.contents, 'utf8')
-            subtitle_metadata_database.store(subtitle_path, subtitle.metadata)
+        if(!subtitle){
+            console.log(`No suitable subtitle found for "${video_path}" for language "${language}"`)
+            return;
         }
+        const subtitle_path = path.join(parent_path, `${subtitle_filename}${subtitle.extension}`)
+        console.log(`Saving subtitle to "${subtitle_path}"`)
+        await fs.writeFile(subtitle_path, subtitle.contents, 'utf8')
+        subtitle_metadata_database.store(subtitle_path, subtitle.metadata)
     }
 
     const run_imdb_matching_only = async root_path => {

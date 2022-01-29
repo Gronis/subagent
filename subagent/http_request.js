@@ -31,9 +31,8 @@ const http_request = (url, options) => {
         response.body = body.join('');
         response.statusCode = res.statusCode;
         response.headers = res.headers;
-        if(300 <= res.statusCode && res.statusCode < 400){
-          console.log(response)
-          http_request(response.headers.location)
+        if(300 <= res.statusCode && res.statusCode < 400 && response.headers.location){
+          http_request(new URL(response.headers.location, url))
               .then(r => resolve(r))
               .catch(reject)
         } else {

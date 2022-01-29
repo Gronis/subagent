@@ -89,6 +89,7 @@ const make_api = async (cache_path) => {
         if (imdb_entities.length > 0) {
             const imdb_entity = imdb_entities
                 .sort((r1, r2) => score(r2) - score(r1))
+                .filter(r => r.id && r.id.startsWith('tt'))
                 .find(() => true)
             return imdb_entity
         }

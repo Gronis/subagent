@@ -15,10 +15,14 @@ const remove_sample_files = file_list => {
 }
 
 const list_video_files = async pathname => {
-    // TODO: Add file structure search recursion
-    return (await fs.readdir(pathname))
-        .filter(filename => filename.match(VIDEO_EXTENSION_PATTERN))
+    const directory_lookups = (await fs.readdir(pathname))
         .map(filename => path.join(pathname, filename))
+        .map(async filepath => ( await fs.stat(filepath)).isDirectory()
+            ? await list_video_files(filepath)
+            : filepath )
+    return (await Promise.all(directory_lookups))
+        .flat()
+        .filter(filename => filename.match(VIDEO_EXTENSION_PATTERN))
 }
 
 const print_help = () => {
@@ -271,7 +275,7 @@ const main = async () => {
         // Only works for movies for now
         const video_paths = remove_sample_files(await list_video_files(root_path))         
         console.log("Matching movies:", video_paths)
-        
+
         //Download subs
         for(const video_path of video_paths){
             let imdb_entity = imdb_metadata_database.load(video_path)

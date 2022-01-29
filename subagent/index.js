@@ -265,7 +265,6 @@ const main = async () => {
             .map(i => i.id + ": " + i.title + " " + i.year + " q:" + i.source.query )
         console.log(imdb_entities.join('\n'))
     }
-    
     const run_job = async (root_path, languages) => {
         console.log("Running subagent job...")
         // Only works for movies for now
@@ -308,9 +307,14 @@ const main = async () => {
     // TODO: use normal watch (not promise watch, because of better nodejs compatibility)
     if(watch){
         const watcher = watch(root_path)
+        let timestamp_last_job = new Date(0)
         console.log(`Watching directory: "${root_path}"`)
         for await (filechange of watcher){
             if(filechange.filename && filechange.filename.match(VIDEO_EXTENSION_PATTERN)){
+                const timestamp_now = new Date()
+                const millis_since_last_job = timestamp_now - timestamp_last_job
+                if(millis_since_last_job < 5000) continue;
+                timestamp_last_job = timestamp_now;
                 try{
                     await run_job(root_path, languages)
                 } catch (err){

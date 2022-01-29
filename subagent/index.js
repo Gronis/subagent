@@ -18,7 +18,8 @@ const list_video_files = async pathname => {
     const directory_lookups = (await fs.readdir(pathname))
         .map(filename => path.join(pathname, filename))
         .map(async filepath => ( await fs.stat(filepath)).isDirectory()
-            ? await list_video_files(filepath)
+            // ? await list_video_files(filepath)
+            ? filepath // Don't do recursive search for now.
             : filepath )
     return (await Promise.all(directory_lookups))
         .flat()

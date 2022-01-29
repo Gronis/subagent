@@ -82,7 +82,12 @@ const make_api = async (cache_path, api_keys) => {
         const response = await cached_http_request(url, { headers })
         if(response.statusCode == 200){
             return JSON.parse(response.body)
+        } else if (response.statusCode == 502) {
+            console.log("Server error. Retrying in 5 seconds.")
+            await new Promise(r => setTimeout(r, 5000));
+            return await request_subtitles(imdb_id, language)
         } else {
+            console.log("Error requesting", url, "statusCode:", response.statusCode)
             return { data: []}
         }
     }

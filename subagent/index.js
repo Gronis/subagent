@@ -6,6 +6,7 @@ const make_imdb_api = require('./imdb_api')
 const database = require('./database')
 const subsync = require('./subsync')
 const srt = require('./srt')
+const watch = require('./watch')
 
 const VIDEO_EXTENSION_PATTERN = /\.((mkv)|(avi)|(mp4))$/;
 
@@ -91,9 +92,9 @@ const main = async () => {
             .map(s_file => path.join(parent_path, s_file))
             .map(s_path => ({ 
                 path: s_path, 
-                metadata: subtitle_metadata_database.load(s_path)
+                metadata: subtitle_metadata_database.load(s_path),
             }))
-            .filter(s => s && s.metadata.sync_result.score > (minimum_score || 0))
+            .filter(s => s && s.metadata && s.metadata.sync_result.score > (minimum_score || 0))
             .sort((s1, s2) => s2.metadata.sync_result.score - s1.metadata.sync_result.score)
             .map(s => s.path)
             .find(() => true)
@@ -210,27 +211,28 @@ const main = async () => {
         }
         // Before we choose, see if we can match with other subtitles in other languages
         const synced_subtitle_path = await get_synced_subtitle_path(video_path, 100)
-        if(subtitles.length == 0 && !synced_subtitle_path){
-            console.log(`No suitable subtitle found for "${video_path}" for language "${language}"`)
-            return;
-        }
-        console.log(`Resyncing subs using "${synced_subtitle_path}" as reference.`)
-        for(const subtitle_file of (subtitles.length > 0? subtitles : subtitle_files.slice(0,5))){
-            const subtitle_data = await download_subtitle(subtitle_file)
-            if(!subtitle_data) continue;
-            const { synced_subtitle_data, sync_result } = await sync_subtitle(subtitle_data, synced_subtitle_path)
-            if(!sync_result) return;
-            if(!sync_result.correlated || !synced_subtitle_data) continue;
-            console.log('Sync OK!', sync_result)
-            subtitles.push({
-                ...synced_subtitle_data,
-                metadata: {
-                    imdb_entity,
-                    file_id: subtitle_file.file_id,
-                    sync_reference: synced_subtitle_path,
-                    sync_result,
-                },
-            })
+        if(synced_subtitle_path){
+            console.log(`Resyncing subs using "${synced_subtitle_path}" as reference.`)
+            const resync_subtitle_files = [
+                ...(subtitles.length? subtitles : subtitle_files.slice(0,5))
+            ]
+            for(const subtitle_file of resync_subtitle_files){
+                const subtitle_data = await download_subtitle(subtitle_file)
+                if(!subtitle_data) continue;
+                const { synced_subtitle_data, sync_result } = await sync_subtitle(subtitle_data, synced_subtitle_path)
+                if(!sync_result) return;
+                if(!sync_result.correlated || !synced_subtitle_data) continue;
+                console.log('Sync OK!', sync_result)
+                subtitles.push({
+                    ...synced_subtitle_data,
+                    metadata: {
+                        imdb_entity,
+                        file_id: subtitle_file.file_id,
+                        sync_reference: synced_subtitle_path,
+                        sync_result,
+                    },
+                })
+            }
         }
 
         // Take the subtitle with the best score.
@@ -304,8 +306,8 @@ const main = async () => {
     await run_job(root_path, languages)
     
     // TODO: use normal watch (not promise watch, because of better nodejs compatibility)
-    if(fs.watch){
-        const watcher = fs.watch(root_path)
+    if(watch){
+        const watcher = watch(root_path)
         console.log(`Watching directory: "${root_path}"`)
         for await (filechange of watcher){
             if(filechange.filename && filechange.filename.match(VIDEO_EXTENSION_PATTERN)){

@@ -87,8 +87,8 @@ const main = async () => {
     const imdb_metadata_database = await database.open(cache_path, 'imdb_metadata_database.json')
     const subsync_failure_database = await database.open(cache_path, 'subsync_failure_database.json')
 
-    // Get previously synced subtitle in any other language. Sorted by score, min score: 100
-    const get_synced_subtitle_path = async (video_path, minimum_score) => {
+    // Get previously synced subtitle in any other language. Sorted by score, min points: 20
+    const get_synced_subtitle_path = async (video_path) => {
         const parent_path = path.dirname(video_path)
         const subtitle_filename = path.basename(video_path) + ".subagent-GENERATED"
         const synced_sub_filenames = (await fs.readdir(parent_path))
@@ -99,7 +99,7 @@ const main = async () => {
                 path: s_path, 
                 metadata: subtitle_metadata_database.load(s_path),
             }))
-            .filter(s => s && s.metadata && s.metadata.sync_result.score > (minimum_score || 0))
+            .filter(s => s && s.metadata && s.metadata.sync_result)
             .sort((s1, s2) => s2.metadata.sync_result.score - s1.metadata.sync_result.score)
             .map(s => s.path)
             .find(() => true)
@@ -215,7 +215,7 @@ const main = async () => {
             }
         }
         // Before we choose, see if we can match with other subtitles in other languages
-        const synced_subtitle_path = await get_synced_subtitle_path(video_path, 100)
+        const synced_subtitle_path = await get_synced_subtitle_path(video_path)
         if(synced_subtitle_path){
             console.log(`Resyncing subs using "${synced_subtitle_path}" as reference.`)
             const resync_subtitle_files = [
@@ -227,6 +227,11 @@ const main = async () => {
                 const { synced_subtitle_data, sync_result } = await sync_subtitle(subtitle_data, synced_subtitle_path)
                 if(!sync_result) return;
                 if(!sync_result.correlated || !synced_subtitle_data) continue;
+                const ref_sync_result = subtitle_metadata_database.load(synced_subtitle_path).sync_result
+                // Scale score on the result from the reference score.
+                // If reference has fewer than 200 points, scale score down
+                const scale_factor = Math.max(0, Math.min(1, Math.log10(ref_sync_result.points/20)))
+                sync_result.score *= scale_factor
                 console.log('Sync OK!', sync_result)
                 subtitles.push({
                     ...synced_subtitle_data,

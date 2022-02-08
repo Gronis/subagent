@@ -6,7 +6,7 @@ const http_request = (url, options) => {
   options = options || {};
   const secure = (url.protocol != null && url.protocol.includes('https')) || url.port == 443;
   const body = options.body
-  options = {
+  const opts = {
     hostname: url.hostname,
     port: url.port || (secure? 443 : 80),
     path: url.pathname + url.search,
@@ -20,15 +20,21 @@ const http_request = (url, options) => {
   const module = secure? https : http;
   
   return new Promise((resolve, reject) => {
-    const req = module.request(options, (res) => {
+    const req = module.request(opts, (res) => {
       let response = {}
       let body = []
-      res.setEncoding(options.encoding || 'utf8');
+      if(!options.buffer){
+        res.setEncoding(options.encoding || 'utf8');
+      }
       res.on('data', (chunk) => {
         body.push(chunk);
       });
       res.on('end', () => {
-        response.body = body.join('');
+        if(options.buffer){
+          response.body = Buffer.concat(body);
+        } else {
+          response.body = body.join('');
+        }
         response.statusCode = res.statusCode;
         response.headers = res.headers;
         if(300 <= res.statusCode && res.statusCode < 400 && response.headers.location){

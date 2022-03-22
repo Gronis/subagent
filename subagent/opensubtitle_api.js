@@ -63,12 +63,11 @@ const make_api = async (cache_path, api_keys) => {
                     file_id,
                 }
             }
-        } catch {
-            return {
-                contents: "",
-                extension: "",
-                file_id,
-            }
+        } catch {}
+        return {
+            contents: "",
+            extension: "",
+            file_id,
         }
     }
 

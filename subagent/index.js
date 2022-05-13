@@ -269,7 +269,7 @@ const main = async () => {
             console.log(`No suitable subtitle found for "${video_path}" for language "${language}"`)
             return;
         }
-        const subtitle_path = path.join(parent_path, `${subtitle_name}.${subtitle.extension}`)
+        const subtitle_path = path.join(parent_path, subtitle_name + subtitle.extension)
         console.log(`Saving subtitle to "${subtitle_path}"`)
         await fs.writeFile(subtitle_path, subtitle.contents, 'utf8')
         subtitle_metadata_database.store(subtitle_path, subtitle.metadata)

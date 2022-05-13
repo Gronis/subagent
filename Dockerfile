@@ -40,8 +40,7 @@ RUN git clone https://github.com/sc0ty/subsync.git && \
     cp subsync/config.py.template subsync/config.py
 
 # Install any needed packages specified in requirements.txt; build subsync
-RUN pip install --no-binary :all: "cryptography<3.5" && \
-    pip install -r subsync/requirements.txt && \
+RUN pip install -r subsync/requirements.txt && \
     pip install pyinstaller && \
     pip install ./subsync
 

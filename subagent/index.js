@@ -8,26 +8,31 @@ const subsync = require('./subsync')
 const srt = require('./srt')
 const watch = require('./watch')
 
+const GENERATED_SUB_NAME = "subagent-GENERATED"
 const VIDEO_EXTENSION_PATTERN = /\.((mkv)|(avi)|(mp4))$/;
+const GENERATED_SUBTITLE_EXTENSION_PATTERN = /subagent-GENERATED\.[a-z][a-z][a-z]?\.((srt)|(ass)|(ssa))$/;
 
 const remove_sample_files = file_list => {
     return file_list.filter(p => !p.toLowerCase().match('sample'))
 }
 
-const list_video_files = async pathname => {
-    const directory_lookups = (await fs.readdir(pathname))
+const list_files = async (pathname, pattern) => {
+    const directory_lookups = (await fs.readdir(pathname).catch(() => []))
         .map(filename => path.join(pathname, filename))
         .map(async filepath => ( await fs.stat(filepath)).isDirectory()
-            // ? await list_video_files(filepath)
+            // ? await list_files(filepath, pattern)
             ? filepath // Don't do recursive search for now.
             : filepath )
     return (await Promise.all(directory_lookups))
         .flat()
-        .filter(filename => filename.match(VIDEO_EXTENSION_PATTERN))
+        .filter(filename => filename.match(pattern))
 }
 
+const list_video_files = async pathname => list_files(pathname, VIDEO_EXTENSION_PATTERN)
+const list_generated_sub_files = async pathname => list_files(pathname, GENERATED_SUBTITLE_EXTENSION_PATTERN)
+
 const print_help = () => {
-    console.log("Usage: subagent [Options...] path/to/movies language [language...]")
+    console.log("Usage: subagent [options...] <path> <language> [<language>...]")
     console.log()
     console.log("Watches a directory of movies and attempts to download and sync subtitles.")
     console.log(" - Uses imdb to match movies.")
@@ -35,17 +40,19 @@ const print_help = () => {
     console.log(" - Utilizes subsync to sync subtitles.")
     console.log()
     console.log("Optional arguments:")
-    console.log("  --cache path/to/cache Use this path as cache")
-    console.log("  --help                print this help and exit")
+    console.log("  --cache <path>         Use this path as cache (Recommended).")
+    console.log("  --clean                Removes subs if ref-video has been removed.")
+    console.log("  --help                 Print this help and exit.")
     console.log()
     console.log("Positional arguments:")
-    console.log("  path/to/movies        Directory to scan")
-    console.log("  language              3-letter language code for subtitle")
+    console.log("  path                   Directory to scan")
+    console.log("  language               2-letter language code for subtitle")
     console.log()
 }
 
 const parse_args = (args) => {
     let cache_path = './'
+    let clean = false
     while((args[0] || '').startsWith('--')){
         // Print help
         if(args[0] === '--help'){
@@ -60,14 +67,19 @@ const parse_args = (args) => {
             }
             args = args.slice(2)
         }
+        if(args[0] === '--clean'){
+            clean = true
+            args = args.slice(1)
+        }
     } 
-    const root_path = args[0]
+    const root_scan_path = args[0]
     args = args.slice(1)
     const languages = args
     return {
         cache_path,
-        root_path,
+        root_scan_path,
         languages,
+        clean,
     }
 }
 
@@ -77,7 +89,7 @@ const main = async () => {
         print_help();
         process.exit(0);
     }
-    const {cache_path, root_path, languages} = parse_args(args);
+    const {cache_path, root_scan_path, languages, clean} = parse_args(args);
     const api_keys = [
 
     ]
@@ -90,9 +102,9 @@ const main = async () => {
     // Get previously synced subtitle in any other language. Sorted by score, min points: 20
     const get_synced_subtitle_path = async (video_path) => {
         const parent_path = path.dirname(video_path)
-        const subtitle_filename = path.basename(video_path) + ".subagent-GENERATED"
+        const subtitle_name = [path.basename(video_path), GENERATED_SUB_NAME].join('.')
         const synced_sub_filenames = (await fs.readdir(parent_path))
-            .filter(p => p.includes(subtitle_filename))
+            .filter(p => p.includes(subtitle_name))
         return synced_sub_filenames
             .map(s_file => path.join(parent_path, s_file))
             .map(s_path => ({ 
@@ -172,9 +184,9 @@ const main = async () => {
         const subtitles = []
         const video_filename = path.basename(video_path)
         const parent_path = path.dirname(video_path)
-        const subtitle_filename = video_filename + `.subagent-GENERATED.${language}`
+        const subtitle_name = [video_filename, GENERATED_SUB_NAME, language].join('.')
         const has_subs = (await fs.readdir(parent_path))
-            .filter(p => p.includes(subtitle_filename)).length > 0
+            .filter(p => p.includes(subtitle_name)).length > 0
 
         if(has_subs){
             console.log(`"${video_filename}" has subtitles for language "${language}", skipping...`)
@@ -257,17 +269,17 @@ const main = async () => {
             console.log(`No suitable subtitle found for "${video_path}" for language "${language}"`)
             return;
         }
-        const subtitle_path = path.join(parent_path, `${subtitle_filename}${subtitle.extension}`)
+        const subtitle_path = path.join(parent_path, `${subtitle_name}.${subtitle.extension}`)
         console.log(`Saving subtitle to "${subtitle_path}"`)
         await fs.writeFile(subtitle_path, subtitle.contents, 'utf8')
         subtitle_metadata_database.store(subtitle_path, subtitle.metadata)
     }
 
-    const run_imdb_matching_only = async root_path => {
+    const run_imdb_matching_only = async root_scan_path => {
         const movies_paths_raw = (await fs.readFile('movies.txt', 'utf8')).split('\n')
         // Only works for movies for now
         const movies_paths_filtered = remove_sample_files(movies_paths_raw)
-            .map(p => p.replace(root_path, '')) // Unprepend root path 
+            .map(p => p.replace(root_scan_path, '')) // Unprepend root path 
             .slice(0,800)
         
         const imdb_entities = (await Promise.all(movies_paths_filtered
@@ -279,17 +291,17 @@ const main = async () => {
         console.log(imdb_entities.join('\n'))
     }
 
-    const run_scan = async (root_path, languages) => {
+    const run_scan = async (root_scan_path, languages) => {
         console.log("Running subagent scan job...")
         // Only works for movies for now
-        const video_paths = remove_sample_files(await list_video_files(root_path))         
+        const video_paths = remove_sample_files(await list_video_files(root_scan_path))         
         console.log("Matching movies:", video_paths)
         
         //Download subs
         for(const video_path of video_paths){
             let imdb_entity = imdb_metadata_database.load(video_path)
             if(!imdb_entity){
-                const query = query_extractor.from_path(video_path.replace(root_path, ''))
+                const query = query_extractor.from_path(video_path.replace(root_scan_path, ''))
                 console.log("Searching for:", query)
                 imdb_entity = await imdb_api.query(query)
                 if(!imdb_entity.id){
@@ -313,10 +325,23 @@ const main = async () => {
             }
         }
         console.log("Finished subagent scan job...")
+        if(!clean) return;
+        console.log("Running subagent clean job...")
+        const video_files = await list_video_files(root_scan_path)
+        const sub_files = await list_generated_sub_files(root_scan_path)
+        for(let sub_filename of sub_files){
+            const video_filename = sub_filename
+                .replace(GENERATED_SUBTITLE_EXTENSION_PATTERN, '')
+                .replace(/\.$/, '') // Remove dot on the end
+            if(video_files.indexOf(video_filename) == -1){
+                console.log("    Removing", sub_filename)
+            }
+        }
+        console.log("Finished subagent clean job...")
     }
 
-    // await run_imdb_matching_only(root_path)
-    await run_scan(root_path, languages)
+    // await run_imdb_matching_only(root_scan_path)
+    await run_scan(root_scan_path, languages)
     
     let timestamp_last_job = new Date(0)
     let active_job = false;
@@ -328,7 +353,7 @@ const main = async () => {
         timestamp_last_job = timestamp_now;
         active_job = true;
         try{
-            await run_scan(root_path, languages)
+            await run_scan(root_scan_path, languages)
         } catch (err){
             console.log("Error during job", err)
         } finally{
@@ -342,8 +367,8 @@ const main = async () => {
     }
     // If watcher is supported, scan when video-files changes on filesystem.
     if(watch){
-        const watcher = watch(root_path, { recursive: true })
-        console.log(`Watching directory: "${root_path}"`)
+        const watcher = watch(root_scan_path, { recursive: true })
+        console.log(`Watching directory: "${root_scan_path}"`)
         for await (filechange of watcher){
             if(filechange.filename && filechange.filename.match(VIDEO_EXTENSION_PATTERN)){
                 await run_scheduled_scan()

@@ -32,7 +32,7 @@ async function* watch (path, options) {
         try{
             fs.watch(dir, opts, cb)
         } catch (err) {
-            console.log(err)
+            console.log("    ERROR:", err.message, "skipping...")
         }
     }
 

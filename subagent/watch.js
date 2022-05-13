@@ -5,7 +5,7 @@ const list_directories = async (pathname, depth) => {
     if (depth == 0 || !(await fs.promises.stat(pathname)).isDirectory()){
         return null
     }
-    const directory_lookups = (await fs.promises.readdir(pathname))
+    const directory_lookups = (await fs.promises.readdir(pathname).catch(() => []))
         .map(filename => path.join(pathname, filename))
         .map(async filepath => await list_directories(filepath, depth - 1))
     return (await Promise.all(directory_lookups))
@@ -27,14 +27,23 @@ async function* watch (path, options) {
             onevent = null;
         }
     }
+
+    const try_watch = (dir, opts, cb) => {
+        try{
+            fs.watch(dir, opts, cb)
+        } catch (err) {
+            console.log(err)
+        }
+    }
+
     // Attempt to do some recursive file-watch. 
     // Not perfect, cannot watch directories created after initial setup.
     // Max 3 recursion depth.
     if(recursive){
         (await list_directories(path, 3))
-            .forEach(dirpath => fs.watch(dirpath, opts, listener))
+            .forEach(dirpath => try_watch(dirpath, opts, listener))
     } else {
-        fs.watch(path, opts, listener)
+        try_watch(path, opts, listener)
     }
     while(true){
         while(event_queue.length){

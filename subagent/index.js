@@ -117,7 +117,10 @@ const main = async () => {
     }
 
     const sync_subtitle = async (subtitle_data, reference_path) => {
-        const subsync_failure_key = `${reference_path}:${subtitle_data.file_id}`
+        const reference_size = (await fs.stat(reference_path).catch(() => ({ size: 0 }))).size
+        const subsync_failure_key = (
+            `REF(${reference_path}):SIZE(${reference_size}):SUB(${subtitle_data.file_id})`
+        )
         {   // Use cached result so we dont sync failed subtitles over and over.
             const sync_result = subsync_failure_database.load(subsync_failure_key)
             if(sync_result){

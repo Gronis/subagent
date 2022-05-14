@@ -26,9 +26,11 @@ const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filena
                 process.stdout.write(data)
             }
             if(data.match('ERROR')){
-                console.log("Got error", data)
-                result.correlated = false
-                accept(result);
+                console.log("ERROR in sybsync process:", data)
+                // Stop sync prematurly.
+                if(sync_subtitle.exitCode === null){
+                    sync_subtitle.kill()
+                }
             }
             if(data.match('speech recognition model is missing')){
                 reject('Speech recognition model is missing');

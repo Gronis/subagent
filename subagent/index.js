@@ -335,7 +335,7 @@ const main = async () => {
                 .replace(/\.$/, '') // Remove dot on the end
             if(video_files.indexOf(video_filename) == -1){
                 console.log("    Removing", sub_filename)
-                await fs.rm(sub_filename)
+                await fs.unlink(sub_filename)
             }
         }
         console.log("Finished subagent clean job...")

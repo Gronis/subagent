@@ -371,7 +371,8 @@ const main = async () => {
         console.log(`Watching directory: "${root_scan_path}"`)
         for await (filechange of watcher){
             if(filechange.filename && filechange.filename.match(VIDEO_EXTENSION_PATTERN)){
-                await run_scheduled_scan()
+                // run async since we don't want to queue old file-watcher events.
+                run_scheduled_scan() 
             }
         }
     } 

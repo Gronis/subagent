@@ -108,7 +108,7 @@ const make_api = async (cache_path, api_keys) => {
             await new Promise(r => setTimeout(r, 5000));
             return await request_download(file_id)
         } else {
-            console.log("Error requesting", url, "statusCode:", response.statusCode)
+            console.log("Error requesting", url, "Response:", response)
             return {}
         }
     }
@@ -155,7 +155,7 @@ const make_api = async (cache_path, api_keys) => {
             await save_subtitle(file.file_id, subtitle)
             return subtitle
         } else {
-            console.log("Error requesting", url, "statusCode:", response2.statusCode)
+            console.log("Error requesting", response1.link, "Response:", response2)
             return subtitle
         }
     }

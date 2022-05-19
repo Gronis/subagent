@@ -20,8 +20,8 @@ const list_files = async (pathname, pattern) => {
     const directory_lookups = (await fs.readdir(pathname).catch(() => []))
         .map(filename => path.join(pathname, filename))
         .map(async filepath => ( await fs.stat(filepath)).isDirectory()
-            // ? await list_files(filepath, pattern)
-            ? filepath // Don't do recursive search for now.
+            ? await list_files(filepath, pattern)
+            // ? filepath // Don't do recursive search for now.
             : filepath )
     return (await Promise.all(directory_lookups))
         .flat()

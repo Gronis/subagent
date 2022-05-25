@@ -109,6 +109,10 @@ const from_text = (name) => {
         /^\([^0-9]*\)$/,
         /^$/,
     ]
+    const regex_remove_sencences = [
+        /_directors_cut/g,
+    ]
+
     const regex_year = /^[0-9][0-9][0-9][0-9]$/;
     const words = (name || '')
         .replace(/\[[^\[]*\]/g, ' ')
@@ -134,7 +138,7 @@ const from_text = (name) => {
         .slice(0, finalEndIndex)
         .join('_').toLowerCase()
         .replace(/__/g, '_') // Sometimes, dubble underscores can occur
-    return result
+    return regex_remove_sencences.reduce((r, p) => r.replace(p, ''), result)
 }
 
 // Scores similar queries. Higher score is "more similar"
@@ -165,10 +169,26 @@ const compare = (q1, q2) => {
         - (Math.abs(q1words.length - q2words.length) * 2)
 }
 
+const get_special_release_type = name_or_path => {
+    const lower_case = (name_or_path || '').toLowerCase()
+    const is_unrated = !!lower_case.match(/unrated/g)
+    const is_directors_cut = !!lower_case.match(/director.?s.?cut/g)
+    const is_uncut = !!lower_case.match(/uncut/g)
+    const is_remastered = !!lower_case.match(/remastered/g)
+    const is_extended = !!lower_case.match(/extended/g)
+    if(is_unrated) return 'Unrated'
+    if(is_directors_cut) return 'DirectorsCut'
+    if(is_uncut) return 'Uncut'
+    if(is_remastered) return 'Remastered'
+    if(is_extended) return 'Extended'
+    return null;
+}
+
 module.exports = {
     from_path,
     from_text,
     compare,
     year,
     trim_year,
+    get_special_release_type,
 }

@@ -118,7 +118,7 @@ const main = async () => {
     }
 
     const download_subtitle = async subtitle_file => {
-        console.log(`Downloading: [id:${subtitle_file.file_id}]`)
+        console.log(`Downloading: [id:${subtitle_file.file_id}], "${subtitle_file.file_name}"`)
         const subtitle_data = await opensubtitle_api.download(subtitle_file);
         if(!subtitle_data || !subtitle_data.contents || !subtitle_data.extension){
             console.log(`Failed to download: "${subtitle_file.file_id}"`)
@@ -197,13 +197,20 @@ const main = async () => {
             console.log(`"${video_filename}" is smaller than 128kb, skipping...`)
             return;
         }
+        const release_type = query_extractor.get_special_release_type(video_filename)
         console.log(
             "Fetching subs for:\n",
-            `  title: "${imdb_entity.title}" (${imdb_entity.year})\n`,
+            `imdb_id: ${imdb_entity.id}\n`,
+            `  title: "${imdb_entity.title}" (${imdb_entity.year}) ${release_type || ''}\n`,
             `   file: "${video_filename}"\n`,
             `   lang: "${language}"`,
         )
-        const subtitle_files = await opensubtitle_api.query(imdb_entity.id, language)
+        const subtitle_files = (await opensubtitle_api.query(imdb_entity.id, language))
+            .sort((s1, s2) => {
+                const s1r = query_extractor.get_special_release_type(s1.file_name) == release_type
+                const s2r = query_extractor.get_special_release_type(s2.file_name) == release_type
+                return s2r - s1r
+            })
         console.log("Got", subtitle_files.length, "subtitle(s)")
         for(const subtitle_file of subtitle_files.slice(0,5)){
             const subtitle_data = await download_subtitle(subtitle_file)

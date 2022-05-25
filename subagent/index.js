@@ -118,13 +118,14 @@ const main = async () => {
     }
 
     const download_subtitle = async subtitle_file => {
-        console.log(`Downloading: [id:${subtitle_file.file_id}], "${subtitle_file.file_name}"`)
-        const subtitle_data = await opensubtitle_api.download(subtitle_file);
+        const sub = subtitle_file;
+        console.log(`Downloading: [id:${sub.file_id}], "${sub.file_name || sub.release}"`)
+        const subtitle_data = await opensubtitle_api.download(sub);
         if(!subtitle_data || !subtitle_data.contents || !subtitle_data.extension){
-            console.log(`Failed to download: "${subtitle_file.file_id}"`)
+            console.log(`Failed to download: "${sub.file_id}"`)
             return null;
         }
-        console.log(`Downloaded [id:${subtitle_file.file_id}] successfully`)
+        console.log(`Downloaded [id:${sub.file_id}] successfully`)
         return subtitle_data
     }
 
@@ -208,8 +209,8 @@ const main = async () => {
         const subtitle_files = (await opensubtitle_api.query(imdb_entity.id, language))
             .sort((s1, s2) => {
                 if(!release_type) return 0;
-                const s1r = query_extractor.get_special_release_type(s1.file_name) == release_type
-                const s2r = query_extractor.get_special_release_type(s2.file_name) == release_type
+                const s1r = query_extractor.get_special_release_type(s1.file_name || s1.release) == release_type
+                const s2r = query_extractor.get_special_release_type(s2.file_name || s2.release) == release_type
                 return s2r - s1r
             })
         console.log("Got", subtitle_files.length, "subtitle(s)")

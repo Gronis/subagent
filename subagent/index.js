@@ -207,6 +207,7 @@ const main = async () => {
         )
         const subtitle_files = (await opensubtitle_api.query(imdb_entity.id, language))
             .sort((s1, s2) => {
+                if(!release_type) return 0;
                 const s1r = query_extractor.get_special_release_type(s1.file_name) == release_type
                 const s2r = query_extractor.get_special_release_type(s2.file_name) == release_type
                 return s2r - s1r

@@ -309,9 +309,9 @@ const main = async () => {
         //Download subs
         for(const video_path of video_paths){
             let imdb_entity = imdb_metadata_database.load(video_path)
-            if(!imdb_entity){
-                const query = query_extractor.from_path(video_path.replace(root_scan_path, ''))
-                console.log("Searching for:", query)
+            const query = query_extractor.from_path(video_path.replace(root_scan_path, ''))
+            if(!imdb_entity || !imdb_entity.source || imdb_entity.source.query !== query){
+                console.log(`Searching for: "${query}"`)
                 imdb_entity = await imdb_api.query(query)
                 if(!imdb_entity.id){
                     console.log("Cannot match", imdb_entity.l, "skipping...")

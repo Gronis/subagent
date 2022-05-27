@@ -1,14 +1,16 @@
 const proc = require('child_process');
 
-const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filename) => {
+const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filename, extra_args) => {
     const result = await new Promise((accept, reject) => {
+        extra_args = extra_args || []
         const args = [
             // Need loglevel INFO to read status of sync
             '-c', '--overwrite', '--loglevel=INFO', 
             'sync' ,
             '--ref', video_filename, 
             '--sub', subtitle_in_filename, 
-            '--out', subtitle_out_filename
+            '--out', subtitle_out_filename,
+            ...extra_args,
         ]
         const sync_subtitle = proc.spawn('subsync', args);
         let result = {}

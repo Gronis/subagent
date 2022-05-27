@@ -136,7 +136,7 @@ const main = async () => {
         )
         {   // Use cached result so we dont sync failed subtitles over and over.
             const sync_result = subsync_failure_database.load(subsync_failure_key)
-            if(sync_result){
+            if(sync_result && sync_result.score > 0){
                 console.log("Subtitle sync has failed before. Won't sync again. Previous result:")
                 console.log(sync_result)
                 return {
@@ -151,18 +151,28 @@ const main = async () => {
             ? srt.fix(subtitle_data.contents) 
             : subtitle_data.contents
         await fs.writeFile(sub_in_path, subtitle_contents, 'utf8')
-        console.log(`Syncing [id:${subtitle_data.file_id}] using reference "${reference_path}"`)
-        const sync_result = await subsync(reference_path, sub_in_path, sub_out_path).catch(err => {
-            console.log('Media cannot be synced with subtitles.', err)
-        })
-        if(!sync_result){
-            console.log(`Subtitle sync failed. Skipping "${reference_path}"`)
-            return {
-                sync_result: null,
-                synced_subtitle_data: null,
+        
+        let sync_result = null;
+        // Try to sync both with audio and subtitle as reference.
+        const extra_args_to_try = [
+            ['--ref-stream-by-type=sub'],
+            ['--ref-stream-by-type=audio'],
+        ]
+        for(let extra_args of extra_args_to_try){
+            console.log(`Syncing [id:${subtitle_data.file_id}] using reference "${reference_path}"`)
+            console.log(`    Using extra arguments: ${extra_args}`)
+            sync_result = await subsync(reference_path, sub_in_path, sub_out_path, extra_args).catch(err => {
+                console.log('Media cannot be synced with subtitles.', err)
+            })
+            if(sync_result && sync_result.correlated) return {
+                sync_result,
+                synced_subtitle_data: {
+                    ...subtitle_data,
+                    contents: await fs.readFile(sub_out_path, 'utf8'),
+                }
             }
         }
-        if(!sync_result.correlated){
+        if(sync_result && !sync_result.correlated){
             subsync_failure_database.store(subsync_failure_key, sync_result)
             console.log("Subtitle sync failed. Result:")
             console.log(sync_result)
@@ -172,12 +182,10 @@ const main = async () => {
                 synced_subtitle_data: null,
             }
         }
+        console.log(`Subtitle sync failed. Skipping "${reference_path}"`)
         return {
-            sync_result,
-            synced_subtitle_data: {
-                ...subtitle_data,
-                contents: await fs.readFile(sub_out_path, 'utf8'),
-            }
+            sync_result: null,
+            synced_subtitle_data: null,
         }
     }
 

@@ -10,6 +10,7 @@ const watch = require('./watch')
 
 const GENERATED_SUB_NAME = "subagent-GENERATED"
 const VIDEO_EXTENSION_PATTERN = /\.((mkv)|(avi)|(mp4))$/;
+const SUBTITLE_EXTENSION_PATTERN = /\.((srt)|(ass)|(ssa))$/;
 const GENERATED_SUBTITLE_EXTENSION_PATTERN = /subagent-GENERATED\.[a-z][a-z][a-z]?\.((srt)|(ass)|(ssa))$/;
 
 const remove_sample_files = file_list => {
@@ -81,6 +82,15 @@ const parse_args = (args) => {
         languages,
         clean,
     }
+}
+
+const has_sub_in_language = (video_filename, subtitle_paths, language_code) => {
+    const video_filename_query = query_extractor.from_text(video_filename)
+    const subtitle_matches = subtitle_paths
+        .filter(sfn => sfn.match(SUBTITLE_EXTENSION_PATTERN) && query_extractor.is_lang(sfn, language_code))
+        .map(sfn => query_extractor.from_text(sfn))
+        .filter(q => q === video_filename_query)
+    return subtitle_matches.length > 0
 }
 
 const main = async () => {
@@ -189,13 +199,12 @@ const main = async () => {
         }
     }
 
-    const download_and_sync_subtitle = async (imdb_entity, language, video_path) => {
+    const download_and_sync_subtitle = async (imdb_entity, language_code, video_path) => {
         const subtitles = []
         const video_filename = path.basename(video_path)
         const parent_path = path.dirname(video_path)
-        const subtitle_name = [video_filename, GENERATED_SUB_NAME, language].join('.')
-        const has_subs = (await fs.readdir(parent_path))
-            .filter(p => p.includes(subtitle_name)).length > 0
+        const subtitle_name = [video_filename, GENERATED_SUB_NAME, language_code].join('.')
+        const has_subs = has_sub_in_language(video_filename, await fs.readdir(parent_path), language_code)
 
         if(has_subs){
             // console.log(`"${video_filename}" has subtitles for language "${language}", skipping...`)
@@ -212,9 +221,9 @@ const main = async () => {
             `imdb_id: ${imdb_entity.id}\n`,
             `  title: "${imdb_entity.title}" (${imdb_entity.year}) ${release_type || ''}\n`,
             `   file: "${video_filename}"\n`,
-            `   lang: "${language}"`,
+            `   lang: "${language_code}"`,
         )
-        const subtitle_files = (await opensubtitle_api.query(imdb_entity.id, language))
+        const subtitle_files = (await opensubtitle_api.query(imdb_entity.id, language_code))
             .sort((s1, s2) => {
                 if(!release_type) return 0;
                 const s1r = query_extractor.get_special_release_type(s1.file_name || s1.release) == release_type
@@ -283,7 +292,7 @@ const main = async () => {
             .sort((s1, s2) => s2.metadata.sync_result.score - s1.metadata.sync_result.score)
             .find(() => true)
         if(!subtitle){
-            console.log(`No suitable subtitle found for "${video_path}" for language "${language}"`)
+            console.log(`No suitable subtitle found for "${video_path}" for language "${language_code}"`)
             return;
         }
         const subtitle_path = path.join(parent_path, subtitle_name + subtitle.extension)

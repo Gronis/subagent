@@ -2,6 +2,8 @@
 const path = require('path');
 const utils = require('./utils');
 
+const WHITESPACE = /[ \.\-\_,:?`'·]/
+
 const year = (query) => {
     query = ' ' + query.split('_').reverse().join(' ')
     const regex_year = /[ \.\-\_,]?([0-9][0-9][0-9][0-9])/;
@@ -62,7 +64,6 @@ const from_path = (filepath) => {
 }
 
 const from_text = (name) => {
-    const whitespace = /[ \.\-\_,:?`'·]/
     const regex_hard_end_words = [
         /^720p$/,
         /^1080p$/,
@@ -118,7 +119,7 @@ const from_text = (name) => {
         .replace(/\[[^\[]*\]/g, ' ')
         .replace(/\([^0-9]*\)/g, ' ')
         .replace(/[']/g, '')
-        .split(whitespace)
+        .split(WHITESPACE)
         .filter(w => !regex_remove_words.some(p => w.match(p)))
         .map(w => w.trim().replace(/[\(|\)|\[|\]]/g, ''))
         .map(w => w.replace(/^0+/, ''))
@@ -184,6 +185,10 @@ const get_special_release_type = name_or_path => {
     return null;
 }
 
+const is_lang = (name_or_path, language_code) => (name_or_path || "")
+    .split(WHITESPACE)
+    .find(w => w === language_code);
+
 module.exports = {
     from_path,
     from_text,
@@ -191,4 +196,5 @@ module.exports = {
     year,
     trim_year,
     get_special_release_type,
+    is_lang,
 }

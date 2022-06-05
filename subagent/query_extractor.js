@@ -53,7 +53,7 @@ const from_path = (filepath) => {
 
     const y = results.map(s => year(s))[0]
     if(y){
-        results = results.map(s => ensure_year(s, y))
+        results = results.map(s => ensure_year(s, year(s) || y))
     }
 
     // Sort so that we prioritize titles with years,

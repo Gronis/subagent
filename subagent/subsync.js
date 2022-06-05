@@ -39,10 +39,6 @@ const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filena
             if(data.match('speech recognition model is missing')){
                 reject('Speech recognition model is missing');
             }
-            const score = data.match(/score: ([0-9\.]+)/)
-            if(score){
-                result.score = parseFloat(score[1])
-            }
             const points = data.match(/points=([0-9]+)/)
             if(points){
                 result.points = parseFloat(points[1])

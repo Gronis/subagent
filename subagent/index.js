@@ -198,12 +198,12 @@ const main = async () => {
             .filter(p => p.includes(subtitle_name)).length > 0
 
         if(has_subs){
-            console.log(`"${video_filename}" has subtitles for language "${language}", skipping...`)
+            // console.log(`"${video_filename}" has subtitles for language "${language}", skipping...`)
             return;
         }
         const size = (await fs.stat(video_path) || {}).size || 0
         if(size < 128 * 1024){
-            console.log(`"${video_filename}" is smaller than 128kb, skipping...`)
+            // console.log(`"${video_filename}" is smaller than 128kb, skipping...`)
             return;
         }
         const release_type = query_extractor.get_special_release_type(video_filename)
@@ -312,7 +312,7 @@ const main = async () => {
         console.log("Running subagent scan job...")
         // Only works for movies for now
         const video_paths = remove_sample_files(await list_video_files(root_scan_path))         
-        console.log("Matching movies:", video_paths)
+        console.log(`Matching ${video_paths.length} file(s).`)
         
         //Download subs
         for(const video_path of video_paths){

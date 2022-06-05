@@ -17,9 +17,11 @@ const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filena
         sync_subtitle.on('exit', (code) => {
             if(code == 0){
                 accept(result);
-            } else {
-                result.correlated = false
+            } else if (result.points >= 0) {
+                result.correlated = false;
                 accept(result);
+            } else {
+                reject('Sync failed, Probably an error with video file.');
             }
         });
         const on_data = d => {

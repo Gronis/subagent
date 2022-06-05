@@ -136,7 +136,7 @@ const main = async () => {
         )
         {   // Use cached result so we dont sync failed subtitles over and over.
             const sync_result = subsync_failure_database.load(subsync_failure_key)
-            if(sync_result && sync_result.score > 0){
+            if(sync_result){
                 console.log("Subtitle sync has failed before. Won't sync again. Previous result:")
                 console.log(sync_result)
                 return {

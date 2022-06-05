@@ -21,7 +21,7 @@ const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filena
                 result.correlated = false;
                 accept(result);
             } else {
-                reject('Sync failed, Probably an error with video file.');
+                reject('Sync failed, subsync process stopped with no data-points.');
             }
         });
         const on_data = d => {

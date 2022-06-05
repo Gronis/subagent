@@ -208,12 +208,12 @@ const main = async () => {
 
         if(has_subs){
             // console.log(`"${video_filename}" has subtitles for language "${language}", skipping...`)
-            return;
+            return true;
         }
         const size = (await fs.stat(video_path) || {}).size || 0
         if(size < 128 * 1024){
             // console.log(`"${video_filename}" is smaller than 128kb, skipping...`)
-            return;
+            return true;
         }
         const release_type = query_extractor.get_special_release_type(video_filename)
         console.log(
@@ -306,12 +306,13 @@ const main = async () => {
             .find(() => true)
         if(!subtitle){
             console.log(`No suitable subtitle found for "${video_path}" for language "${language_code}"`)
-            return;
+            return false;
         }
         const subtitle_path = path.join(parent_path, subtitle_name + subtitle.extension)
         console.log(`Saving subtitle to "${subtitle_path}"`)
         await fs.writeFile(subtitle_path, subtitle.contents, 'utf8')
         subtitle_metadata_database.store(subtitle_path, subtitle.metadata)
+        return true;
     }
 
     const run_imdb_matching_only = async root_scan_path => {
@@ -335,6 +336,8 @@ const main = async () => {
         // Only works for movies for now
         const video_paths = remove_sample_files(await list_video_files(root_scan_path))         
         console.log(`Matching ${video_paths.length} file(s).`)
+
+        const files_without_synced_subtitles = [];
         
         //Download subs
         for(const video_path of video_paths){
@@ -345,7 +348,7 @@ const main = async () => {
                 console.log(`Searching for: "${query}"`)
                 imdb_entity = await imdb_api.query(query)
                 if(!imdb_entity.id){
-                    console.log("Cannot match", imdb_entity.l, "skipping...")
+                    console.log("Cannot match", video_path, "skipping...")
                     continue;
                 }
                 console.log(
@@ -355,7 +358,13 @@ const main = async () => {
                 imdb_metadata_database.store(video_path, imdb_entity)
             }
             for (let language of languages){
-                await download_and_sync_subtitle(imdb_entity, language, video_path);
+                const success = await download_and_sync_subtitle(imdb_entity, language, video_path);
+                if(!success){
+                    files_without_synced_subtitles.push({
+                        file: video_path,
+                        lang: language,
+                    })
+                }
                 if(opensubtitle_api.blocked()){
                     console.log("Too many download requests.")
                     console.log("Api keys will reset within 24 hours.")
@@ -365,6 +374,7 @@ const main = async () => {
             }
         }
         console.log("Finished subagent scan job...")
+        console.log("Files missing synced subtitles:", files_without_synced_subtitles)
         if(!clean) return;
         console.log("Running subagent clean job...")
         const video_files = await list_video_files(root_scan_path)

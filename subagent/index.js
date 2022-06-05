@@ -223,12 +223,25 @@ const main = async () => {
             `   file: "${video_filename}"\n`,
             `   lang: "${language_code}"`,
         )
+        // Sort subtitle files according to 
+        // 1: Same special release type (if any).
+        // 2: Any special release type (if any).
+        // 3: Same order as returned from server (typically sorted by popularity by server).
         const subtitle_files = (await opensubtitle_api.query(imdb_entity.id, language_code))
             .sort((s1, s2) => {
                 if(!release_type) return 0;
-                const s1r = query_extractor.get_special_release_type(s1.file_name || s1.release) == release_type
-                const s2r = query_extractor.get_special_release_type(s2.file_name || s2.release) == release_type
-                return s2r - s1r
+                {
+                    const s1r = query_extractor.get_special_release_type(s1.file_name || s1.release) == release_type
+                    const s2r = query_extractor.get_special_release_type(s2.file_name || s2.release) == release_type
+                    const order = s2r - s1r
+                    if(order != 0) return order;
+                }
+                {
+                    const s1r = (query_extractor.get_special_release_type(s1.file_name || s1.release) || '').length != 0
+                    const s2r = (query_extractor.get_special_release_type(s2.file_name || s2.release) || '').length != 0
+                    const order = s2r - s1r
+                    return order;
+                }
             })
         console.log("Got", subtitle_files.length, "subtitle(s)")
         for(const subtitle_file of subtitle_files.slice(0,5)){

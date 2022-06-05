@@ -174,11 +174,13 @@ const get_special_release_type = name_or_path => {
     const lower_case = (name_or_path || '').toLowerCase()
     const is_unrated = !!lower_case.match(/unrated/g)
     const is_directors_cut = !!lower_case.match(/director.?s.?cut/g)
+    const is_rogue_cut = !!lower_case.match(/rogue.?cut/g)
     const is_uncut = !!lower_case.match(/uncut/g)
     const is_remastered = !!lower_case.match(/remastered/g)
     const is_extended = !!lower_case.match(/extended/g)
     if(is_unrated) return 'Unrated'
     if(is_directors_cut) return 'DirectorsCut'
+    if(is_rogue_cut) return 'RogueCut'
     if(is_uncut) return 'Uncut'
     if(is_remastered) return 'Remastered'
     if(is_extended) return 'Extended'

@@ -2,12 +2,64 @@
 const path = require('path');
 const utils = require('./utils');
 
-const WHITESPACE = /[ \.\-\_,:?`'·]/
+const REGEX_WHITESPACE = /[ \.\-\_,:?`'·]/
+
+const REGEX_HARD_END_WORDS = [
+    /^720p$/,
+    /^1080p$/,
+    /^2160p$/,
+    /^mkv$/,
+    /^mp4$/,
+    /^avi$/,
+    /^x264$/,
+    /^x265$/,
+    /^x266$/,
+    /^h264$/,
+    /^h265$/,
+    /^h266$/,
+    /^10bit$/,
+    /^hdrip$/,
+    /^bdrip$/,
+    /^br$/,
+    /^dts$/,
+    /^bluray$/,
+    /^remux$/,
+    /^unrated$/,
+    /^remastered$/,
+    /^theatrical$/,
+    /^extended$/,
+    /^korsub$/,
+    /^swedish$/,
+    /^english$/,
+    /^nordic$/,
+    /^extras$/,
+    /^extra$/,
+]
+// Only end word if they happen after a word with 4 numbers (a year)
+const REGEX_SOFT_END_WORDS = [
+    /^hevc$/,
+    /^avc$/,
+    /^hdr$/,
+    /^sdr$/,
+    /^hc$/,
+    /^ee$/,
+]
+const REGEX_REMOVE_WORDS = [
+    /^\+$/,
+    /^\[.*\]/,
+    /^\([^0-9]*\)$/,
+    /^$/,
+]
+const REGEX_REMOVE_SENCENCES = [
+    /_directors_cut/g,
+]
+
+const REGEX_YEAR = /^[0-9][0-9][0-9][0-9]$/;
 
 const year = (query) => {
     query = ' ' + query.split('_').reverse().join(' ')
-    const regex_year = /[ \.\-\_,]?([0-9][0-9][0-9][0-9])/;
-    const match = query.match(regex_year)
+    const REGEX_YEAR = /[ \.\-\_,]?([0-9][0-9][0-9][0-9])/;
+    const match = query.match(REGEX_YEAR)
     if (match) {
         return match[1]
     }
@@ -23,6 +75,17 @@ const ensure_year = (query, year) => {
 
 const trim_year = query => {
     return query.replace(/_[0-9][0-9][0-9][0-9]$/, '')
+}
+
+let break_into_words = text => {
+    return (text || '')
+        .replace(/\[[^\[]*\]/g, ' ')
+        .replace(/\([^0-9]*\)/g, ' ')
+        .replace(/[']/g, '')
+        .split(REGEX_WHITESPACE)
+        .filter(w => !REGEX_REMOVE_WORDS.some(p => w.match(p)))
+        .map(w => w.trim().replace(/[\(|\)|\[|\]]/g, ''))
+        .map(w => w.replace(/^0+/, ''));
 }
 
 const from_path = (filepath) => {
@@ -64,71 +127,13 @@ const from_path = (filepath) => {
 }
 
 const from_text = (name) => {
-    const regex_hard_end_words = [
-        /^720p$/,
-        /^1080p$/,
-        /^2160p$/,
-        /^mkv$/,
-        /^mp4$/,
-        /^avi$/,
-        /^x264$/,
-        /^x265$/,
-        /^x266$/,
-        /^h264$/,
-        /^h265$/,
-        /^h266$/,
-        /^10bit$/,
-        /^hdrip$/,
-        /^bdrip$/,
-        /^br$/,
-        /^dts$/,
-        /^bluray$/,
-        /^remux$/,
-        /^unrated$/,
-        /^remastered$/,
-        /^theatrical$/,
-        /^extended$/,
-        /^korsub$/,
-        /^swedish$/,
-        /^english$/,
-        /^nordic$/,
-        /^extras$/,
-        /^extra$/,
-    ]
-    // Only end word if they happen after a word with 4 numbers (a year)
-    const regex_soft_end_words = [
-        /^hevc$/,
-        /^avc$/,
-        /^hdr$/,
-        /^sdr$/,
-        /^hc$/,
-        /^ee$/,
-    ]
-    const regex_remove_words = [
-        /^\+$/,
-        /^\[.*\]/,
-        /^\([^0-9]*\)$/,
-        /^$/,
-    ]
-    const regex_remove_sencences = [
-        /_directors_cut/g,
-    ]
-
-    const regex_year = /^[0-9][0-9][0-9][0-9]$/;
-    const words = (name || '')
-        .replace(/\[[^\[]*\]/g, ' ')
-        .replace(/\([^0-9]*\)/g, ' ')
-        .replace(/[']/g, '')
-        .split(WHITESPACE)
-        .filter(w => !regex_remove_words.some(p => w.match(p)))
-        .map(w => w.trim().replace(/[\(|\)|\[|\]]/g, ''))
-        .map(w => w.replace(/^0+/, ''))
+    const words = break_into_words(name)
     const softEndIndex = words
-        .findIndex(w => regex_soft_end_words.some(p => w.toLowerCase().match(p)))
+        .findIndex(w => REGEX_SOFT_END_WORDS.some(p => w.toLowerCase().match(p)))
     const hardEndIndex = words
-        .findIndex(w => regex_hard_end_words.some(p => w.toLowerCase().match(p)))
+        .findIndex(w => REGEX_HARD_END_WORDS.some(p => w.toLowerCase().match(p)))
     const yearIndex = words.length - [...words].reverse()
-        .findIndex(w => w.match(regex_year))
+        .findIndex(w => w.match(REGEX_YEAR))
     const endIndices = [words.length, hardEndIndex, yearIndex || softEndIndex]
         .filter(y => y > 0)
     const finalEndIndex = Math.min(...endIndices)
@@ -139,7 +144,7 @@ const from_text = (name) => {
         .slice(0, finalEndIndex)
         .join('_').toLowerCase()
         .replace(/__/g, '_') // Sometimes, dubble underscores can occur
-    return regex_remove_sencences.reduce((r, p) => r.replace(p, ''), result)
+    return REGEX_REMOVE_SENCENCES.reduce((r, p) => r.replace(p, ''), result)
 }
 
 // Scores similar queries. Higher score is "more similar"
@@ -172,12 +177,13 @@ const compare = (q1, q2) => {
 
 const get_special_release_type = name_or_path => {
     const lower_case = (name_or_path || '').toLowerCase()
-    const is_unrated = !!lower_case.match(/unrated/g)
-    const is_directors_cut = !!lower_case.match(/director.?s.?cut/g)
+    const lower_words = break_into_words(lower_case)
+    const is_unrated = !!lower_words.find(w => w === 'unrated') 
+    const is_directors_cut = !!lower_case.match(/director.?s.?cut/g) || !!lower_case.match(/dir.?cut/g) 
     const is_rogue_cut = !!lower_case.match(/rogue.?cut/g)
-    const is_uncut = !!lower_case.match(/uncut/g)
-    const is_remastered = !!lower_case.match(/remastered/g)
-    const is_extended = !!lower_case.match(/extended/g)
+    const is_uncut = !!lower_words.find(w => w === 'uncut') 
+    const is_remastered = !!lower_words.find(w => w === 'remastered') 
+    const is_extended = !!lower_words.find(w => w === 'extended')  || !!lower_words.find(w => w === 'ext') 
     if(is_unrated) return 'Unrated'
     if(is_directors_cut) return 'DirectorsCut'
     if(is_rogue_cut) return 'RogueCut'
@@ -188,7 +194,7 @@ const get_special_release_type = name_or_path => {
 }
 
 const is_lang = (name_or_path, language_code) => (name_or_path || "")
-    .split(WHITESPACE)
+    .split(REGEX_WHITESPACE)
     .find(w => w === language_code);
 
 module.exports = {

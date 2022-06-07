@@ -12,12 +12,7 @@ const GENERATED_SUB_NAME = "subagent-GENERATED"
 const VIDEO_EXTENSION_PATTERN = /\.((mkv)|(avi)|(mp4))$/;
 const SUBTITLE_EXTENSION_PATTERN = /\.((srt)|(ass)|(ssa))$/;
 const GENERATED_SUBTITLE_EXTENSION_PATTERN = /subagent-GENERATED\.[a-z][a-z][a-z]?\.((srt)|(ass)|(ssa))$/;
-const DEFAULT_SYNC_RESULT = {
-    points: 100,
-    maxChange: 1.0,
-    correlated: true,
-    score: 100.0,
-};
+const HIDDEN_FILE_PATTERN = /^\..+$/
 
 const remove_sample_files = file_list => file_list.filter(p => !p.toLowerCase().match('sample'));
 
@@ -125,15 +120,20 @@ const main = async () => {
         const video_file_query = query_extractor.from_text(video_filename)
         const subtitle_name = [video_filename, GENERATED_SUB_NAME].join('.')
         const all_sub_filenames = (await fs_read_dir_or_empty(parent_path))
-            .filter(p => p.match(SUBTITLE_EXTENSION_PATTERN))
-            .filter(p => query_extractor.from_text(p) == video_file_query)
+            .filter(p => p.match(SUBTITLE_EXTENSION_PATTERN) 
+                && !p.match(HIDDEN_FILE_PATTERN)
+                && query_extractor.from_text(p) === video_file_query)
         const synced_sub_filenames = all_sub_filenames
             .filter(p => p.includes(subtitle_name))
         // Subs not synced by subagent assumes this sync_result for comparison:
         const default_metadata = {
-            sync_result: DEFAULT_SYNC_RESULT
+            sync_result: {
+                points: 100,
+                maxChange: 1.0,
+                correlated: true,
+                score: 100.0,
+            }
         }
-        console.log("synced:", synced_sub_filenames, "all:", all_sub_filenames)
         return all_sub_filenames
             .map(s_file => path.join(parent_path, s_file))
             .map(s_path => ({ 
@@ -149,7 +149,7 @@ const main = async () => {
     }
 
     const get_reference_subtitle_scaling_factor = reference_subtitle_path => {
-        const sync_result = subtitle_metadata_database.load(reference_subtitle_path)?.sync_result
+        const sync_result = (subtitle_metadata_database.load(reference_subtitle_path) || {}).sync_result
         // Scale score on the result from the reference score.
         // If reference has fewer than 200 points, scale score down
         if(sync_result) return Math.max(0, Math.min(1, Math.log10(sync_result.points/20)))
@@ -278,7 +278,7 @@ const main = async () => {
             const subtitle_data = await download_subtitle(subtitle_file)
             if(!subtitle_data) continue;
             const { synced_subtitle_data, sync_result } = await sync_subtitle(subtitle_data, video_path)
-            if(!sync_result) return;
+            if(!sync_result) break;
             if(!sync_result.correlated || !synced_subtitle_data) continue;
             console.log('Sync OK!', sync_result)
             subtitles.push({

@@ -77,7 +77,7 @@ const trim_year = query => {
     return query.replace(/_[0-9][0-9][0-9][0-9]$/, '')
 }
 
-let break_into_words = text => {
+const break_into_words = text => {
     return (text || '')
         .replace(/\[[^\[]*\]/g, ' ')
         .replace(/\([^0-9]*\)/g, ' ')

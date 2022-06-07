@@ -13,24 +13,26 @@ const VIDEO_EXTENSION_PATTERN = /\.((mkv)|(avi)|(mp4))$/;
 const SUBTITLE_EXTENSION_PATTERN = /\.((srt)|(ass)|(ssa))$/;
 const GENERATED_SUBTITLE_EXTENSION_PATTERN = /subagent-GENERATED\.[a-z][a-z][a-z]?\.((srt)|(ass)|(ssa))$/;
 
-const remove_sample_files = file_list => {
-    return file_list.filter(p => !p.toLowerCase().match('sample'))
-}
+const remove_sample_files = file_list => file_list.filter(p => !p.toLowerCase().match('sample'));
 
-const list_files = async (pathname, pattern) => {
-    const directory_lookups = (await fs.readdir(pathname).catch(() => []))
+const is_dir = pathname => fs.stat(pathname).then(f => f.isDirectory()).catch(() => false);
+
+const fs_read_dir_or_empty = pathname => fs.readdir(pathname).catch(() => [])
+
+const fs_stat_or_empty = pathname => fs.stat(pathname).catch(() => ({}))
+
+const list_files = async pathname => {
+    const directory_lookups = (await fs_read_dir_or_empty(pathname))
         .map(filename => path.join(pathname, filename))
-        .map(async filepath => ( await fs.stat(filepath)).isDirectory()
-            ? await list_files(filepath, pattern)
-            // ? filepath // Don't do recursive search for now.
-            : filepath )
-    return (await Promise.all(directory_lookups))
-        .flat()
-        .filter(filename => filename.match(pattern))
+        .map(async filepath => (await is_dir(filepath))? await list_files(filepath) : filepath)
+    return (await Promise.all(directory_lookups)).flat()
 }
 
-const list_video_files = async pathname => list_files(pathname, VIDEO_EXTENSION_PATTERN)
-const list_generated_sub_files = async pathname => list_files(pathname, GENERATED_SUBTITLE_EXTENSION_PATTERN)
+const list_video_files = async pathname => (await list_files(pathname))
+    .filter(p => p.match(VIDEO_EXTENSION_PATTERN));
+
+const list_generated_sub_files = async pathname => (await list_files(pathname))
+    .filter(p => p.match(GENERATED_SUBTITLE_EXTENSION_PATTERN));
 
 const print_help = () => {
     console.log("Usage: subagent [options...] <path> <language> [<language>...]")
@@ -113,7 +115,7 @@ const main = async () => {
     const get_synced_subtitle_path = async (video_path) => {
         const parent_path = path.dirname(video_path)
         const subtitle_name = [path.basename(video_path), GENERATED_SUB_NAME].join('.')
-        const synced_sub_filenames = (await fs.readdir(parent_path))
+        const synced_sub_filenames = (await fs_read_dir_or_empty(parent_path))
             .filter(p => p.includes(subtitle_name))
         return synced_sub_filenames
             .map(s_file => path.join(parent_path, s_file))
@@ -139,10 +141,10 @@ const main = async () => {
         return subtitle_data
     }
 
-    const sync_subtitle = async (subtitle_data, reference_path) => {
-        const reference_size = (await fs.stat(reference_path).catch(() => ({ size: 0 }))).size
+    const sync_subtitle = async (sub_data, ref_path) => {
+        const reference_size = (await fs_stat_or_empty(ref_path)).size || 0
         const subsync_failure_key = (
-            `REF(${reference_path}):SIZE(${reference_size}):SUB(${subtitle_data.file_id})`
+            `REF(${ref_path}):SIZE(${reference_size}):SUB(${sub_data.file_id})`
         )
         {   // Use cached result so we dont sync failed subtitles over and over.
             const sync_result = subsync_failure_database.load(subsync_failure_key)
@@ -155,11 +157,11 @@ const main = async () => {
                 }
             }
         }
-        const sub_in_path = path.join(cache_path, `subtitle${subtitle_data.extension}`)
-        const sub_out_path = path.join(cache_path, `synced_subtitle${subtitle_data.extension}`)
-        const subtitle_contents = subtitle_data.extension === '.srt'
-            ? srt.fix(subtitle_data.contents) 
-            : subtitle_data.contents
+        const sub_in_path = path.join(cache_path, `subtitle${sub_data.extension}`)
+        const sub_out_path = path.join(cache_path, `synced_subtitle${sub_data.extension}`)
+        const subtitle_contents = sub_data.extension === '.srt'
+            ? srt.fix(sub_data.contents) 
+            : sub_data.contents
         await fs.writeFile(sub_in_path, subtitle_contents, 'utf8')
         
         let sync_result = null;
@@ -168,16 +170,17 @@ const main = async () => {
             ['--ref-stream-by-type=sub'],
             ['--ref-stream-by-type=audio'],
         ]
+        const on_error = err => console.log('Media cannot be synced with subtitles.', err);
         for(let extra_args of extra_args_to_try){
-            console.log(`Syncing [id:${subtitle_data.file_id}] using reference "${reference_path}"`)
+            console.log(`Syncing [id:${sub_data.file_id}] using reference "${ref_path}"`)
             console.log(`    Using extra arguments: ${extra_args}`)
-            sync_result = await subsync(reference_path, sub_in_path, sub_out_path, extra_args).catch(err => {
-                console.log('Media cannot be synced with subtitles.', err)
-            })
+            sync_result = (
+                await subsync(ref_path, sub_in_path, sub_out_path, extra_args).catch(on_error)
+            ) || sync_result;
             if(sync_result && sync_result.correlated) return {
                 sync_result,
                 synced_subtitle_data: {
-                    ...subtitle_data,
+                    ...sub_data,
                     contents: await fs.readFile(sub_out_path, 'utf8'),
                 }
             }
@@ -192,7 +195,7 @@ const main = async () => {
                 synced_subtitle_data: null,
             }
         }
-        console.log(`Subtitle sync failed. Skipping "${reference_path}"`)
+        console.log(`Subtitle sync failed. Skipping "${ref_path}"`)
         return {
             sync_result: null,
             synced_subtitle_data: null,
@@ -204,13 +207,13 @@ const main = async () => {
         const video_filename = path.basename(video_path)
         const parent_path = path.dirname(video_path)
         const subtitle_name = [video_filename, GENERATED_SUB_NAME, language_code].join('.')
-        const has_subs = has_sub_in_language(video_filename, await fs.readdir(parent_path), language_code)
+        const has_subs = has_sub_in_language(video_filename, await fs_read_dir_or_empty(parent_path), language_code)
 
         if(has_subs){
             // console.log(`"${video_filename}" has subtitles for language "${language}", skipping...`)
             return true;
         }
-        const size = (await fs.stat(video_path) || {}).size || 0
+        const size = (await fs_stat_or_empty(video_path)).size || 0
         if(size < 128 * 1024){
             // console.log(`"${video_filename}" is smaller than 128kb, skipping...`)
             return true;
@@ -310,7 +313,12 @@ const main = async () => {
         }
         const subtitle_path = path.join(parent_path, subtitle_name + subtitle.extension)
         console.log(`Saving subtitle to "${subtitle_path}"`)
-        await fs.writeFile(subtitle_path, subtitle.contents, 'utf8')
+        try{
+            await fs.writeFile(subtitle_path, subtitle.contents, 'utf8')
+        } catch {
+            console.log(`Failed to write subtitle to "${subtitle_path}"`)
+            return false;
+        }
         subtitle_metadata_database.store(subtitle_path, subtitle.metadata)
         return true;
     }
@@ -385,7 +393,7 @@ const main = async () => {
                 .replace(/\.$/, '') // Remove dot on the end
             if(video_files.indexOf(video_filename) == -1){
                 console.log("    Removing", sub_filename)
-                await fs.unlink(sub_filename)
+                await fs.unlink(sub_filename).catch(() => {})
             }
         }
         console.log("Finished subagent clean job...")
@@ -396,8 +404,8 @@ const main = async () => {
     
     let timestamp_last_job = new Date(0)
     let active_job = false;
-    // Only one scheduled scan can run at a time, and not too soon (< 5s) after one another.
-    const run_scheduled_scan = async () => {
+    // Only one singleton scan can run at a time, and not too soon (< 5s) after one another.
+    const run_singleton_scan = async () => {
         const timestamp_now = new Date()
         const millis_since_last_job = timestamp_now - timestamp_last_job
         if(active_job || millis_since_last_job < 5000) return;
@@ -414,7 +422,7 @@ const main = async () => {
     { // Start scheduled runner. Scan more often if watch is unsupported.
         const hourInterval = watch? 12 : 3;
         console.log(`Scheduled for scanning every ${hourInterval} hours.`)
-        setInterval(run_scheduled_scan, 1000 * 3600 * hourInterval)
+        setInterval(run_singleton_scan, 1000 * 3600 * hourInterval)
     }
     // If watcher is supported, scan when video-files changes on filesystem.
     if(watch){
@@ -423,7 +431,7 @@ const main = async () => {
         for await (filechange of watcher){
             if(filechange.filename && filechange.filename.match(VIDEO_EXTENSION_PATTERN)){
                 // run async since we don't want to queue old file-watcher events.
-                run_scheduled_scan() 
+                run_singleton_scan() 
             }
         }
     } 

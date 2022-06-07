@@ -194,8 +194,8 @@ const main = async () => {
         let sync_result = null;
         // Try to sync both with audio and subtitle as reference.
         const extra_args_to_try = [
-            ['--effort=0.8', '--ref-stream-by-type=sub'],
-            ['--effort=0.8', '--ref-stream-by-type=audio'],
+            ['--ref-stream-by-type=sub'],
+            ['--ref-stream-by-type=audio'],
         ]
         const on_error = err => console.log('Media cannot be synced with subtitles.', err);
         for(let extra_args of extra_args_to_try){

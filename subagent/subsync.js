@@ -6,7 +6,7 @@ const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filena
         const args = [
             // Need loglevel INFO to read status of sync
             '-c', '--overwrite', '--loglevel=INFO', 
-            '--effort=0.8',
+            '--effort=1.0',
             'sync' ,
             '--ref', video_filename, 
             '--sub', subtitle_in_filename, 

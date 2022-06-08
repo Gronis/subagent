@@ -193,7 +193,7 @@ const get_special_release_type = name_or_path => {
     return null;
 }
 
-const is_lang = (name_or_path, language_code) => (name_or_path || "")
+const is_lang = (name_or_path, language_code) => !!(name_or_path || "")
     .split(REGEX_WHITESPACE)
     .find(w => w === language_code);
 

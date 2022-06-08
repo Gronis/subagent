@@ -90,7 +90,7 @@ const parse_args = (args) => {
 const has_sub_in_language = (video_filename, subtitle_paths, language_code) => {
     const video_filename_query = query_extractor.from_text(video_filename)
     const subtitle_matches = subtitle_paths
-        .filter(sfn => sfn.match(SUBTITLE_EXTENSION_PATTERN) && query_extractor.is_lang(sfn, language_code))
+        .filter(sfn => sfn.match(SUBTITLE_EXTENSION_PATTERN) && !sfn.match(HIDDEN_FILE_PATTERN) && query_extractor.is_lang(sfn, language_code))
         .map(sfn => query_extractor.from_text(sfn))
         .filter(q => q === video_filename_query)
     return subtitle_matches.length > 0

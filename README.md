@@ -69,6 +69,16 @@ volumes:
 ```
 Start by typing `docker-compose up -d` in a terminal.
 
+## Useful commands
+List all synced subtitles with score less than 25:
+```bash
+docker exec subagent node -e "console.log(Object.entries(JSON.parse(require('fs').readFileSync('./cache/subtitle_metadata_database.json').toString())).sort(([p1, i1], [p2, i2]) => i1.sync_result.score - i2.sync_result.score).map(([p,i]) => ({ p, s: i.sync_result.score})).filter(i => i.s < 25))"
+```
+Print specific result for a certain video
+```bash
+docker exec subagent node -e "console.log(Object.entries(JSON.parse(require('fs').readFileSync('./cache/subtitle_metadata_database.json').toString())).find(([p, i]) => p.includes('/path/to/subtitle.srt')))"
+```
+
 ## Development
 Development assumes the following folders exists in project root:
 - `mov`: Video files to fetch subs and use for sync

@@ -1,9 +1,12 @@
 // Strange encoding can sometimes mess up srt files.
 // Try to fix them again. 
-// Also detect and remove ads. <-- Not done yet
+// Also make an attempt to detect and remove ads.
 const fix = subtitle => {
     const pattern = /[0-9][0-9]\:[0-9][0-9]\:[0-9][0-9]\,[0-9][0-9][0-9] -->/g
     const fix_textbox = textbox => {
+        const contains_url = textbox.match(/((http(s)?\:\/\/)|(www))\.[a-zA-Z0-9]/g)
+        // Remove lines with ads.
+        if(contains_url) return '\n\n';
         let m = pattern.exec(textbox)
         while((m = pattern.exec(textbox))){
             const i = m.index
@@ -16,9 +19,11 @@ const fix = subtitle => {
         .split('\n\n') // Separate to textboxes
         .map(fix_textbox)
         .join('\n\n') // Join textboxes.
-        .replace(/\n\n([0-9][0-9]?[0-9]?[0-9]?\n)?/g, '\n\n') // Remove textbox numbers
+        .replace(/^1\n/, '') // Remove first textbox numbers
+        .replace(/\n\n([0-9][0-9]?[0-9]?[0-9]?)\n/g, '\n\n\n') // Remove in-between textbox numbers
+        .replace(/\n\n/g, '\n')
         .split('\n\n')
-        .slice(1) // Remove first textbox. This one if often broken and full of ads.
+        .filter(t => t.includes('\n'))
         .map((t, i) => `${i+1}\n${t}`)
         .join('\n\n')
 }

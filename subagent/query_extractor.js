@@ -180,12 +180,14 @@ const get_special_release_type = name_or_path => {
     const lower_words = break_into_words(lower_case)
     const is_unrated = !!lower_words.find(w => w === 'unrated') 
     const is_directors_cut = !!lower_case.match(/director.?s.?cut/g) || !!lower_case.match(/dir.?cut/g) 
+    const is_ultimate_cut = !!lower_case.match(/ultimate.?cut/g) || !!lower_case.match(/ult.?cut/g) 
     const is_rogue_cut = !!lower_case.match(/rogue.?cut/g)
     const is_uncut = !!lower_words.find(w => w === 'uncut') 
     const is_remastered = !!lower_words.find(w => w === 'remastered') 
     const is_extended = !!lower_words.find(w => w === 'extended')  || !!lower_words.find(w => w === 'ext') 
     if(is_unrated) return 'Unrated'
     if(is_directors_cut) return 'DirectorsCut'
+    if(is_ultimate_cut) return 'UltimateCut'
     if(is_rogue_cut) return 'RogueCut'
     if(is_uncut) return 'Uncut'
     if(is_remastered) return 'Remastered'

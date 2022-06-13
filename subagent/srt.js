@@ -4,7 +4,7 @@
 const fix = subtitle => {
     const pattern = /[0-9][0-9]\:[0-9][0-9]\:[0-9][0-9]\,[0-9][0-9][0-9] -->/g
     const fix_textbox = textbox => {
-        const contains_url = textbox.match(/((http(s)?\:\/\/)|(www))\.[a-zA-Z0-9]/g)
+        const contains_url = textbox.match(/((https?\:\/\/)|(www\.))[a-zA-Z0-9]+/g)
         // Remove lines with ads.
         if(contains_url) return '\n\n';
         let m = pattern.exec(textbox)

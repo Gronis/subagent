@@ -39,6 +39,7 @@ const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filena
                 // Stop sync prematurly if necessary
                 if(sync_subtitle.exitCode === null && stop_early_errors.some(e => data.includes(e))){
                     sync_subtitle.kill();
+                    reject(data);
                 }
             }
             const points = data.match(/points=([0-9]+)/)

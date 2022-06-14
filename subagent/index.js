@@ -222,7 +222,7 @@ const main = async () => {
                 synced_subtitle_data: null,
             }
         }
-        console.log(`Subtitle sync failed. Skipping "${ref_path}"`)
+        console.log(`Subtitle sync failed for "${ref_path}"`)
         return {
             sync_result: null,
             synced_subtitle_data: null,
@@ -309,7 +309,7 @@ const main = async () => {
                 const subtitle_data = await download_subtitle(subtitle_file)
                 if(!subtitle_data) continue;
                 const { synced_subtitle_data, sync_result } = await sync_subtitle(subtitle_data, reference_subtitle_path)
-                if(!sync_result) return;
+                if(!sync_result) break;
                 if(!sync_result.correlated || !synced_subtitle_data) continue;
                 sync_result.score *= get_reference_subtitle_scaling_factor(reference_subtitle_path)
                 console.log('Sync OK!', sync_result)

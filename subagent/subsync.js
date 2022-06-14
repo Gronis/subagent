@@ -6,6 +6,7 @@ const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filena
         const args = [
             // Need loglevel INFO to read status of sync
             '-c', '--overwrite', '--loglevel=INFO', 
+            // Use maximum effort to sacrifice compute time for better subtitle sync.
             '--effort=1.0',
             'sync' ,
             '--ref', video_filename, 
@@ -32,13 +33,13 @@ const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filena
             }
             if(data.match('ERROR')){
                 console.log("ERROR in sybsync process:", data)
-                // Stop sync prematurly.
-                if(sync_subtitle.exitCode === null){
-                    sync_subtitle.kill()
+                const stop_early_errors = [
+                    'File ended prematurely',
+                ]
+                // Stop sync prematurly if necessary
+                if(sync_subtitle.exitCode === null && stop_early_errors.some(e => data.includes(e))){
+                    sync_subtitle.kill();
                 }
-            }
-            if(data.match('speech recognition model is missing')){
-                reject('Speech recognition model is missing');
             }
             const points = data.match(/points=([0-9]+)/)
             if(points){

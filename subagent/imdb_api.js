@@ -26,7 +26,7 @@ const make_api = async (cache_path) => {
             (imdb_entity.type === 'video') * 10 +
             // Subtract score if it is a game (some games have same titles as movies)
             (imdb_entity.type === 'video game') * -100
-        ) / Math.sqrt(Math.log(imdb_entity.rank))
+        ) / Math.sqrt(Math.log(imdb_entity.rank + 10))
         return score
     }
     

@@ -87,11 +87,13 @@ const make_api = async (cache_path) => {
         //     console.log(imdb_entities.map(i => i.title + ' (' + i.year + ')' + " score: " + score(i)))
         // }
 
+        // Drop non-movie imdb types.
+        imdb_entities = imdb_entities.filter(r => r && r.id && r.id.startsWith('tt'))
+
         // If we have imdb_entities at this point, score and pick the best one.
         if (imdb_entities.length > 0) {
             const imdb_entity = imdb_entities
                 .sort((r1, r2) => score(r2) - score(r1))
-                .filter(r => r.id && r.id.startsWith('tt'))
                 .find(() => true)
             return imdb_entity
         }

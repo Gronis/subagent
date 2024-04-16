@@ -66,15 +66,17 @@ RUN pyinstaller bin/subsync && pyinstaller -y subsync.spec
 ########################################################################################
 
 FROM python:3.8-slim-bullseye
+RUN apt-get update && apt-get install -y libdrm-dev libxcb1-dev libgl-dev nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# add subsync
 COPY --from=builder /app/subsync/dist/subsync /app
 COPY --from=builder /app/subsync/subsync/key.pub /app
+COPY --from=builder /app/subsync/subsync/key.pub /app/_internal
 RUN ln -s /app/subsync /usr/bin/subsync
 
 # install non-def deps
-RUN apt-get update && apt-get install -y libdrm-dev libxcb1-dev libgl-dev nodejs
 COPY subagent /app/subagent
 
-# cleanup
-RUN rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["node", "/app/subagent"]

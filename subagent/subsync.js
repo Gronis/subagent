@@ -16,6 +16,10 @@ const subsync = async (video_filename, subtitle_in_filename, subtitle_out_filena
         ]
         const sync_subtitle = proc.spawn('subsync', args);
         let result = {}
+        sync_subtitle.on('error', (err) => {
+            let msg = JSON.stringify(err, undefined, 2)
+            reject(`Sync process exited with error: ${msg}`);
+        })
         sync_subtitle.on('exit', (code) => {
             if(code == 0){
                 accept(result);

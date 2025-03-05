@@ -230,6 +230,7 @@ const main = async () => {
     }
 
     const download_and_sync_subtitle = async (imdb_entity, language_code, video_path) => {
+        // console.log("Working on", video_path, "for lang:", language_code);
         const subtitles = []
         const video_filename = path.basename(video_path)
         const parent_path = path.dirname(video_path)
@@ -338,8 +339,8 @@ const main = async () => {
         console.log(`Saving subtitle to "${subtitle_path}"`)
         try{
             await fs.writeFile(subtitle_path, subtitle.contents, 'utf8')
-        } catch {
-            console.log(`Failed to write subtitle to "${subtitle_path}"`)
+        } catch (err) {
+            console.log(`Failed to write subtitle to "${subtitle_path}"\nReason: ${err}`)
             return false;
         }
         subtitle_metadata_database.store(subtitle_path, subtitle.metadata)
@@ -363,7 +364,7 @@ const main = async () => {
     }
 
     const run_scan = async (root_scan_path, languages) => {
-        console.log("Running subagent scan job...")
+        console.log("Running subagent scan job using langs,", languages);
         // Only works for movies for now
         const video_paths = remove_sample_files(await list_video_files(root_scan_path))         
         console.log(`Matching ${video_paths.length} file(s).`)

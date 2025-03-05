@@ -97,7 +97,7 @@ node subagent --cache cache mov en
 # Use current architecture
 docker build . -t gronis/subagent
 # Multibuild
-docker buildx build --platform linux/amd64,linux/arm64 . -t gronis/subagent
+docker build --platform=linux/amd64,linux/arm64 . -t gronis/subagent
 ```
 
 ### Run Docker Image
